@@ -1,0 +1,47 @@
+{
+    "name": "ubxty/core-ai",
+    "description": "Core AI abstraction layer for Laravel. Provides shared contracts, managers, retry logic, cost tracking, and CLI tools for building AI provider packages.",
+    "keywords": ["ai", "laravel", "core", "abstraction", "llm", "chatbot"],
+    "license": "MIT",
+    "version": "1.0.0",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Ubxty",
+            "email": "info.ubxty@gmail.com"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/console": "^11.0|^12.0",
+        "illuminate/http": "^11.0|^12.0",
+        "illuminate/cache": "^11.0|^12.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.0|^10.0",
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Ubxty\\CoreAi\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Ubxty\\CoreAi\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Ubxty\\CoreAi\\CoreAiServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
