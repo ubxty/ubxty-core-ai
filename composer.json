@@ -3,7 +3,7 @@
     "description": "Core AI abstraction layer for Laravel. Provides shared contracts, managers, retry logic, cost tracking, and CLI tools for building AI provider packages.",
     "keywords": ["ai", "laravel", "core", "abstraction", "llm", "chatbot"],
     "license": "MIT",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "type": "library",
     "authors": [
         {
