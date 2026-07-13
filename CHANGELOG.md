@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.1.0] - 2026-07-13
+
+### Added
+- **`AbstractAiManager::clampMaxTokens()`** — pre-flight guard that resolves the model's spec via `ModelSpecResolver` and clamps the requested `max_tokens` to (a) the model's `max_tokens` ceiling, then (b) whatever the remaining context window can hold after the input prompt. Called inside `invoke()` and `converse()` before any provider call, so callers can safely pass `maxTokens: 16384` and trust the manager to downscale.
+- **Response-cache layer** on `invoke()` and `converse()`. When `core-ai.cache.response_ttl > 0`, identical `(modelId, systemPrompt, userMessage, maxTokens, temperature)` calls return the previous result without hitting the provider. Hash is `sha256(model|system|user|max|temp)` keyed under `{platform}_ai_response_*`. Multi-turn `converse()` hashes the canonical `messages` JSON array. Cached responses set `cached: true` and `latency_ms: 0`.
+- **`AbstractAiManager::idempotencyKey()`** — public helper that returns a deterministic hash suitable for upstream `Idempotency-Key` headers. Same content-hash strategy as the response cache, so a retried request and its original map to the same key.
+- **Two new cache TTL config knobs** under `core-ai.cache`:
+  - `response_ttl` (int, default `0`) — seconds to memoise `invoke` / `converse` responses. `0` disables.
+  - `embedding_ttl` (int, default `604800` = 7 days) — TTL for embedding responses; embeddings are deterministic and expensive.
+- **`bedrock.prompt_caching` config block** under the bedrock provider section. `points` is a list of named anchors (`system`, `last_user`) where `ubxty/bedrock-ai` injects `cachePoint: { type: 'default' }` markers on the Converse content array. `ttl_seconds` controls the upstream cache window (default 300s, max 3600s). Empty `points` disables. See [`ubxty/bedrock-ai` v2.1.0 changelog](https://github.com/ubxty/bedrock-ai/blob/main/CHANGELOG.md) for the runtime behaviour.
+
+### Changed
+- `invoke()` and `converse()` now resolve the model's alias, run the max-tokens clamp + fits check, and consult the response cache *before* any provider call. The contract return shape is unchanged.
+- `converse()` estimates total prompt tokens using `TokenEstimator::estimateMultimodal($messages, $systemPrompt)` for the fits check, instead of only counting characters in a single string.
+- `cache.models_ttl`, `cache.usage_ttl`, `cache.pricing_ttl` remain as defaults shared across providers; the two new TTLs are additive.
+
+### Notes
+- All additions are backward-compatible. The response cache is opt-in (set `cache.response_ttl` in your published config or override at the manager level). Prompt-cache checkpoints are opt-in via `bedrock.prompt_caching.points`. Existing v2.0.0 consumers keep working unchanged.
+
+---
+
 ## [2.0.0] - 2026-07-13
 
 ### BREAKING CHANGES

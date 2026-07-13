@@ -51,6 +51,16 @@ The service provider is auto-discovered via Laravel's package discovery.
 - `TokenEstimator` — Estimates token counts and cost for text, image, and document inputs.
 - `InvocationLogger` — Structured invocation logging.
 
+### Cost Optimisations (v2.1.0+)
+
+The abstract manager runs three cost-saving hooks before any provider call:
+
+- **Max-tokens clamp** — `invoke()` and `converse()` resolve the model's spec via `ModelSpecResolver` and clamp the requested `max_tokens` to (a) the model's `max_tokens` ceiling, then (b) whatever the remaining context window can hold after the input prompt. Silent downscale on oversized requests, no upstream 400s.
+- **Response cache** — When `core-ai.cache.response_ttl > 0`, identical `(modelId, system, user, maxTokens, temperature)` calls return the previous result. Cache key is `sha256(...)` under `{platform}_ai_response_*`. Cached responses have `cached: true` and `latency_ms: 0`. Default `0` (off) — set in your published `config/core-ai.php`.
+- **Idempotency keys** — `AiManagerContract::idempotencyKey($modelId, $content)` returns a deterministic hash for upstream `Idempotency-Key` headers. Useful when wrapping retries so a network blip doesn't double-bill.
+
+Provider-specific caching (Bedrock `cachePoint` checkpoints, Azure `cache_control`) lives in the respective provider package.
+
 ### Commands (Abstract)
 - `AbstractChatCommand` — Base for interactive `artisan chat` commands.
 - `AbstractConfigureCommand` — Base for provider configuration wizards.

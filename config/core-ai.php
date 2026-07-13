@@ -22,6 +22,8 @@ return [
         'models_ttl'  => 3600,
         'usage_ttl'   => 900,
         'pricing_ttl' => 86400,
+        'response_ttl' => 0,       // v2.1.0 — cache provider responses (invoke/converse) when > 0. 0 disables.
+        'embedding_ttl' => 604800, // v2.1.0 — 7 days; embeddings are deterministic and expensive.
     ],
 
     'logging' => [
@@ -280,6 +282,29 @@ return [
             'enabled'    => env('BEDROCK_HEALTH_CHECK_ENABLED', false),
             'path'       => '/health/bedrock',
             'middleware' => [],
+        ],
+
+        /*
+        |----------------------------------------------------------------------
+        | Prompt Caching (v2.1.0)
+        |----------------------------------------------------------------------
+        |
+        | AWS Bedrock supports checkpoint blocks (`cachePoint: { type: 'default' }`)
+        | on Converse content arrays. Subsequent calls with the same prefix
+        | within the cache TTL get charged ~10% of normal input-token rate.
+        |
+        | 'points' lists the named anchors where the package injects a cache
+        | checkpoint. Supported anchors:
+        |   - 'system'           after the system prompt blocks
+        |   - 'last_user'        after the last user message blocks
+        |
+        | Leave empty to disable. Not all models support caching; the Bedrock
+        | runtime returns a 400 if a checkpoint is placed on an unsupported one.
+        |
+        */
+        'prompt_caching' => [
+            'points' => explode(',', env('BEDROCK_PROMPT_CACHE_POINTS', '')),
+            'ttl_seconds' => (int) env('BEDROCK_PROMPT_CACHE_TTL', 300), // 5 min, max 3600
         ],
 
     ],

@@ -11,6 +11,8 @@ use Ubxty\CoreAi\Events\AiInvoked;
 use Ubxty\CoreAi\Exceptions\ConfigurationException;
 use Ubxty\CoreAi\Exceptions\CostLimitExceededException;
 use Ubxty\CoreAi\Logging\InvocationLogger;
+use Ubxty\CoreAi\Models\ModelSpecResolver;
+use Ubxty\CoreAi\Support\TokenEstimator;
 
 abstract class AbstractAiManager implements AiManagerContract
 {
@@ -52,11 +54,38 @@ abstract class AbstractAiManager implements AiManagerContract
 
         $modelId = $this->resolveAlias($modelId);
 
+        // Pre-flight: clamp max_tokens to model max, ensure input+output fits context.
+        [$maxTokens] = $this->clampMaxTokens(
+            $modelId, $maxTokens,
+            $systemPrompt . $userMessage
+        );
+
+        // Response-cache: same content + same key params returns a cached result
+        // when cache.response_ttl > 0. Skip on streaming / explicit bypass.
+        $responseTtl = (int) ($this->config['cache']['response_ttl'] ?? 0);
+        if ($responseTtl > 0) {
+            $cacheKey = $this->responseCacheKey($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature);
+            $cached = Cache::get($cacheKey);
+
+            if (is_array($cached)) {
+                $cached['cached'] = true;
+                $cached['latency_ms'] = 0;
+                $this->fireInvokedEvent($cached);
+
+                return $cached;
+            }
+        }
+
         $result = $this->performInvoke($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature, $pricing, $connection);
 
         $this->trackCost($result['cost'] ?? 0);
         $this->fireInvokedEvent($result);
         $this->getLogger()->log($result);
+
+        if ($responseTtl > 0) {
+            $cacheKey ??= $this->responseCacheKey($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature);
+            Cache::put($cacheKey, $result, $responseTtl);
+        }
 
         return $result;
     }
@@ -74,6 +103,25 @@ abstract class AbstractAiManager implements AiManagerContract
 
         $modelId = $this->resolveAlias($modelId);
 
+        // Estimate total prompt tokens for fits-check using TokenEstimator.
+        $promptTokens = TokenEstimator::estimateMultimodal($messages, $systemPrompt);
+        [$maxTokens] = $this->clampMaxTokens($modelId, $maxTokens, '', $promptTokens);
+
+        // Response-cache: hash on canonical message array + parameters.
+        $responseTtl = (int) ($this->config['cache']['response_ttl'] ?? 0);
+        if ($responseTtl > 0) {
+            $cacheKey = $this->responseCacheKeyConverse($modelId, $systemPrompt, $messages, $maxTokens, $temperature);
+            $cached = Cache::get($cacheKey);
+
+            if (is_array($cached)) {
+                $cached['cached'] = true;
+                $cached['latency_ms'] = 0;
+                $this->fireInvokedEvent($cached);
+
+                return $cached;
+            }
+        }
+
         $result = $this->performConverse($modelId, $messages, $systemPrompt, $maxTokens, $temperature, $connection);
 
         $cost = $this->calculateCost($result['input_tokens'] ?? 0, $result['output_tokens'] ?? 0, $pricing);
@@ -82,6 +130,11 @@ abstract class AbstractAiManager implements AiManagerContract
         $this->trackCost($cost);
         $this->fireInvokedEvent($result);
         $this->getLogger()->log($result);
+
+        if ($responseTtl > 0) {
+            $cacheKey ??= $this->responseCacheKeyConverse($modelId, $systemPrompt, $messages, $maxTokens, $temperature);
+            Cache::put($cacheKey, $result, $responseTtl);
+        }
 
         return $result;
     }
@@ -375,5 +428,90 @@ abstract class AbstractAiManager implements AiManagerContract
         $keys = $this->config['connections'][$connection]['keys'] ?? [];
 
         return $keys[0] ?? [];
+    }
+
+    // ─────────────────────────────────────────────────────────
+    //  v2.1.0 — Cost optimisation helpers
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * Clamp a requested maxTokens value against the model's max_tokens and
+     * the available output budget after the input prompt.
+     *
+     * @return array{0: int, 1: array{context_window: int, max_tokens: int}, 2: int} [clamped, specs, estimatedInput]
+     */
+    protected function clampMaxTokens(
+        string $modelId,
+        int $requested,
+        string $concatContentForEstimate = '',
+        int $precomputedInputTokens = 0
+    ): array {
+        $specs = ModelSpecResolver::resolve($modelId);
+        $maxAllowed = (int) $specs['max_tokens'];
+        $contextWindow = (int) $specs['context_window'];
+
+        $estimatedInput = $precomputedInputTokens > 0
+            ? $precomputedInputTokens
+            : TokenEstimator::estimate($concatContentForEstimate);
+
+        $clamped = max(0, min($requested, $maxAllowed));
+
+        if (($estimatedInput + $clamped) > $contextWindow) {
+            $clamped = max(0, $contextWindow - $estimatedInput);
+        }
+
+        return [$clamped, $specs, $estimatedInput];
+    }
+
+    /**
+     * Build a deterministic response-cache key for `invoke()`.
+     */
+    protected function responseCacheKey(
+        string $modelId,
+        string $systemPrompt,
+        string $userMessage,
+        int $maxTokens,
+        float $temperature
+    ): string {
+        $raw = implode('|', [
+            $modelId,
+            $systemPrompt,
+            $userMessage,
+            (string) $maxTokens,
+            (string) $temperature,
+        ]);
+
+        return $this->cachePrefix().'_response_'.hash('sha256', $raw);
+    }
+
+    /**
+     * Build a deterministic response-cache key for `converse()` (multi-turn).
+     */
+    protected function responseCacheKeyConverse(
+        string $modelId,
+        string $systemPrompt,
+        array $messages,
+        int $maxTokens,
+        float $temperature
+    ): string {
+        $raw = implode('|', [
+            $modelId,
+            $systemPrompt,
+            json_encode($messages, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            (string) $maxTokens,
+            (string) $temperature,
+        ]);
+
+        return $this->cachePrefix().'_response_'.hash('sha256', $raw);
+    }
+
+    /**
+     * Build a deterministic idempotency key suitable for upstream `Idempotency-Key`
+     * headers. Reuses the same content-hash strategy as the response cache so the
+     * two align for repeat requests.
+     */
+    public function idempotencyKey(string $modelId, string $content): string
+    {
+        return $this->cachePrefix().'-'.hash('sha256', $modelId.'|'.$content);
     }
 }
