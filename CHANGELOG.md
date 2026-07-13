@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.1.2] - 2026-07-13
+
+### Documentation
+- **`README.md`** — full rewrite. Replaces the 103-line quickstart with a 600-line reference covering the contract, the abstract manager, the retry trait, the conversation builder, token estimation, alias + spec resolvers, invocation logging, events, exceptions, configuration, testing, and a guidance "Why a core package?" section.
+- **`docs/getting-started.md`** — end-to-end quickstart from `composer require` to first successful invocation, with example env-var sets for both Bedrock auth modes and Azure OpenAI.
+- **`docs/caching-strategy.md`** — full deep-dive on the v2.1.x cache layers (response, embedding, prompt-cache via the provider packages) plus `Retry-After` honouring. Includes a worked cost-saving math example.
+- **`docs/extending-core-ai.md`** — recipe for writing a provider package that extends `AbstractAiManager` and `AbstractCredentialManager`. ~200 lines of glue code; full 80-line "hello provider" walkthrough.
+- **`docs/real-world-patterns.md`** — 11 patterns distilled from multi-tenant host apps: tenant-aware dispatch, retry safety, multi-turn + multimodal workflows, structured JSON extraction, cost-cap listeners, key-rotation alerting, idempotent queue workers, multi-key round-robin, cost-aware image extraction, cache-bypass, and a v2.1.0 cost-impact case study.
+- **`docs/events-and-listeners.md`** — full payload reference for `AiInvoked`, `AiKeyRotated`, `AiRateLimited`, plus ready-to-use listener templates (usage ledger, pager, SLO counter), BC-alias guidance, ordering guarantees.
+- **`docs/faq.md`** — 30+ short entries spanning installation, cost/tokens, caching, authentication, streaming, events, errors, and extension recipes.
+
+### Notes
+- No source-code changes. No BC implications for downstream consumers.
+- All code examples are derived from how host apps actually use the package; tenant-specific identifiers are abstracted to placeholders.
+
+---
+
 ## [2.1.1] - 2026-07-13
 
 ### Added
