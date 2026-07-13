@@ -20,6 +20,45 @@ trait HasRetryLogic
     protected int $baseDelay;
 
     /**
+     * Named anchors where the manager wants a `cachePoint` / `cache_control` block
+     * injected. Currently: 'system', 'last_user'.
+     *
+     * @var string[]
+     */
+    protected array $promptCachePoints = [];
+
+    /**
+     * Optional explicit Retry-After (seconds) set by the HTTP path after parsing
+     * the rate-limit response. Cleared on each retry iteration.
+     */
+    protected ?int $retryAfterSeconds = null;
+
+    /**
+     * Set the prompt-cache checkpoint anchors. Pass-through from
+     * `core-ai.{bedrock,azure_ai}.prompt_caching.points`.
+     */
+    public function setPromptCachePoints(array $points): static
+    {
+        $this->promptCachePoints = array_values(array_filter(
+            array_map('strval', $points),
+            fn (string $p) => in_array($p, ['system', 'last_user'], true),
+        ));
+
+        return $this;
+    }
+
+    /**
+     * Set the Retry-After hint parsed from an upstream HTTP 429/503 response.
+     * When set, withRetry() uses it in preference to the exponential backoff.
+     */
+    public function setRetryAfterSeconds(?int $seconds): static
+    {
+        $this->retryAfterSeconds = $seconds;
+
+        return $this;
+    }
+
+    /**
      * Execute a callable with key rotation and retry logic.
      *
      * @param  callable(string $resolvedModelId, array $key): array  $callback
@@ -44,7 +83,12 @@ trait HasRetryLogic
                     $isRateLimited = $this->isRateLimitError($errorMessage);
 
                     if ($isRateLimited && $retryAttempt < $this->maxRetries) {
-                        $waitTime = (int) pow($this->baseDelay, $retryAttempt + 1);
+                        // Honour Retry-After when set (HTTP bearer path). Otherwise
+                        // fall back to exponential backoff: baseDelay^attempt.
+                        $waitTime = $this->retryAfterSeconds !== null
+                            ? max(1, $this->retryAfterSeconds)
+                            : (int) pow($this->baseDelay, $retryAttempt + 1);
+                        $this->retryAfterSeconds = null; // consume the hint
                         sleep($waitTime);
                         $retryAttempt++;
 

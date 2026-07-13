@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.1.1] - 2026-07-13
+
+### Added
+- **`HasRetryLogic::setPromptCachePoints()` / `setRetryAfterSeconds()`** — public setters on the canonical (core-ai) trait, so platform clients (azure-ai) get the same hook surface as bedrock-ai. Bedrock-ai had its own local copy in 2.1.0; this patch unifies it in core-ai.
+
+### Changed
+- **`HasRetryLogic::withRetry()`** now honours the captured `Retry-After` hint (set by the HTTP path before throwing on a 429) in preference to the exponential backoff. Each retry iteration consumes one hint. Bedrock-ai's local copy was already updated in 2.1.0; this aligns core-ai's canonical trait.
+
+### Notes
+- Patch release — v2.1.0 ships the AbstractAiManager hooks (response cache, max-tokens clamp, idempotency key) and the `bedrock.prompt_caching` config block; v2.1.1 finishes the platform-client hooks in the shared retry trait. Both versions are fully compatible.
+
+---
+
 ## [2.1.0] - 2026-07-13
 
 ### Added
