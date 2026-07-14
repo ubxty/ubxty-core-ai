@@ -23,6 +23,8 @@ class ConversationBuilder
 
     protected ?string $connection = null;
 
+    protected ?array $schema = null;
+
     protected AiManagerContract $manager;
 
     public function __construct(AiManagerContract $manager, string $modelId)
@@ -60,28 +62,8 @@ class ConversationBuilder
      */
     public function userWithImage(string $prompt, string $source, string $format = 'auto'): static
     {
-        if (is_file($source)) {
-            $size = filesize($source);
-            if ($size > 15 * 1024 * 1024) {
-                throw new AiException(
-                    'Image file exceeds 15 MB limit ('.round($size / 1024 / 1024, 1).' MB). Resize or compress it first.'
-                );
-            }
-            $base64 = base64_encode(file_get_contents($source));
-        } else {
-            $base64 = $source;
-        }
-
-        if ($format === 'auto') {
-            $ext = strtolower(pathinfo($source, PATHINFO_EXTENSION));
-            $format = match ($ext) {
-                'jpg', 'jpeg' => 'jpeg',
-                'png' => 'png',
-                'gif' => 'gif',
-                'webp' => 'webp',
-                default => 'jpeg',
-            };
-        }
+        $base64 = $this->readAsBase64($source, 'Image');
+        $format = $this->resolveImageFormat($source, $format);
 
         $this->messages[] = [
             'role' => 'user',
@@ -95,6 +77,117 @@ class ConversationBuilder
     }
 
     /**
+     * Add a user message with multiple document attachments in a single message.
+     *
+     * Each entry in $documents may be either a string (file path) or an
+     * associative array with keys: path (string, required), format (string,
+     * optional, 'auto' detects from extension), name (string, optional).
+     *
+     * @param  string  $prompt  The instruction that applies to all documents.
+     * @param  array<int, string|array{path: string, format?: string, name?: string}>  $documents
+     */
+    public function userWithDocuments(string $prompt, array $documents): static
+    {
+        if (count($documents) === 0) {
+            throw new AiException('At least one document is required.');
+        }
+
+        $content = [];
+        foreach ($documents as $i => $doc) {
+            if (is_string($doc)) {
+                $source = $doc;
+                $format = 'auto';
+                $name = '';
+            } else {
+                $source = (string) ($doc['path'] ?? $doc[0] ?? '');
+                $format = (string) ($doc['format'] ?? 'auto');
+                $name = (string) ($doc['name'] ?? '');
+
+                if ($source === '') {
+                    throw new AiException("Document entry at index {$i} is missing 'path'.");
+                }
+            }
+
+            $base64 = $this->readAsBase64($source, 'Document');
+            $format = $this->resolveDocumentFormat($source, $format);
+            if ($name === '' && is_file($source)) {
+                $name = pathinfo($source, PATHINFO_FILENAME);
+            }
+
+            $content[] = ['type' => 'document', 'format' => $format, 'name' => $name ?: 'document', 'data' => $base64];
+        }
+        $content[] = ['type' => 'text', 'text' => $prompt];
+
+        $this->messages[] = ['role' => 'user', 'content' => $content];
+
+        return $this;
+    }
+
+    /**
+     * Add a user message with mixed image/document attachments in a single message.
+     *
+     * Each entry in $attachments is an associative array:
+     *   - type (string, required) — 'image' or 'document'
+     *   - path (string, required) — absolute file path or pre-encoded base64
+     *   - format (string, optional) — 'auto' to detect from extension
+     *   - name (string, optional) — display name (documents only)
+     *
+     * @param  string  $prompt  The instruction that applies to all attachments.
+     * @param  array<int, array{type: string, path: string, format?: string, name?: string}>  $attachments
+     */
+    public function userWithAttachments(string $prompt, array $attachments): static
+    {
+        if (count($attachments) === 0) {
+            throw new AiException('At least one attachment is required.');
+        }
+
+        $content = [];
+        foreach ($attachments as $i => $att) {
+            $type = (string) ($att['type'] ?? '');
+            $source = (string) ($att['path'] ?? '');
+            $format = (string) ($att['format'] ?? 'auto');
+            $name = (string) ($att['name'] ?? '');
+
+            if ($source === '') {
+                throw new AiException("Attachment entry at index {$i} is missing 'path'.");
+            }
+
+            $base64 = $this->readAsBase64($source, ucfirst($type));
+
+            switch ($type) {
+                case 'image':
+                    $format = $this->resolveImageFormat($source, $format);
+                    $content[] = ['type' => 'image', 'format' => $format, 'data' => $base64];
+                    break;
+
+                case 'document':
+                    $format = $this->resolveDocumentFormat($source, $format);
+                    if ($name === '' && is_file($source)) {
+                        $name = pathinfo($source, PATHINFO_FILENAME);
+                    }
+                    $content[] = ['type' => 'document', 'format' => $format, 'name' => $name ?: 'document', 'data' => $base64];
+                    break;
+
+                default:
+                    throw new AiException("Unknown attachment type '{$type}' (use 'image' or 'document') at index {$i}.");
+            }
+        }
+        $content[] = ['type' => 'text', 'text' => $prompt];
+
+        $this->messages[] = ['role' => 'user', 'content' => $content];
+
+        return $this;
+    }
+
+    /**
+     * Add a user message with a single image. Shorthand for userWithImage().
+     */
+    public function image(string $source, string $prompt = '', string $format = 'auto'): static
+    {
+        return $this->userWithImage($prompt, $source, $format);
+    }
+
+    /**
      * Add a user message with a document attachment.
      *
      * @param  string  $prompt  The question or instruction about the document.
@@ -104,34 +197,8 @@ class ConversationBuilder
      */
     public function userWithDocument(string $prompt, string $source, string $format = 'auto', string $name = ''): static
     {
-        if (is_file($source)) {
-            $size = filesize($source);
-            if ($size > 15 * 1024 * 1024) {
-                throw new AiException(
-                    'Document file exceeds 15 MB limit ('.round($size / 1024 / 1024, 1).' MB). Reduce the file size first.'
-                );
-            }
-            $base64 = base64_encode(file_get_contents($source));
-        } else {
-            $base64 = $source;
-        }
-
-        if ($format === 'auto') {
-            $ext = strtolower(pathinfo($source, PATHINFO_EXTENSION));
-            $format = match ($ext) {
-                'pdf' => 'pdf',
-                'csv' => 'csv',
-                'doc' => 'doc',
-                'docx' => 'docx',
-                'xls' => 'xls',
-                'xlsx' => 'xlsx',
-                'html', 'htm' => 'html',
-                'txt', 'text' => 'txt',
-                'md', 'markdown' => 'md',
-                default => 'pdf',
-            };
-        }
-
+        $base64 = $this->readAsBase64($source, 'Document');
+        $format = $this->resolveDocumentFormat($source, $format);
         if ($name === '' && is_file($source)) {
             $name = pathinfo($source, PATHINFO_FILENAME);
         }
@@ -200,6 +267,33 @@ class ConversationBuilder
     }
 
     /**
+     * Override the model ID mid-build.
+     */
+    public function model(string $modelId): static
+    {
+        $this->modelId = $modelId;
+
+        return $this;
+    }
+
+    /**
+     * Request that the model respond with JSON matching the given schema.
+     *
+     * The schema is appended to the system prompt as a JSON Schema
+     * instruction. It is a model-side instruction, not a hard wire-format
+     * constraint, so model capability differs (newer Claude / GPT-4o+ /
+     * Nova follow it reliably; older models treat it as guidance).
+     *
+     * @param  array<string, mixed>  $jsonSchema
+     */
+    public function schema(array $jsonSchema): static
+    {
+        $this->schema = $jsonSchema;
+
+        return $this;
+    }
+
+    /**
      * Estimate token usage and cost before sending.
      *
      * @return array{input_tokens: int, available_output: int, fits: bool, context_window: int, estimated_cost: float}
@@ -242,7 +336,7 @@ class ConversationBuilder
         $result = $this->manager->converse(
             $this->modelId,
             $this->messages,
-            $this->systemPrompt,
+            $this->effectiveSystemPrompt(),
             $this->maxTokens,
             $this->temperature,
             $this->connection,
@@ -265,7 +359,7 @@ class ConversationBuilder
             $this->modelId,
             $this->messages,
             $onChunk,
-            $this->systemPrompt,
+            $this->effectiveSystemPrompt(),
             $this->maxTokens,
             $this->temperature,
             $this->connection,
@@ -275,6 +369,21 @@ class ConversationBuilder
         $this->messages[] = ['role' => 'assistant', 'content' => $result['response']];
 
         return $result;
+    }
+
+    /**
+     * Alias for {@see sendStream()} returning the same assembled result array.
+     *
+     * Provided so callers that prefer the noun ("stream the conversation")
+     * rather than the verb ("send with streaming") have a one-word entry.
+     * For HTTP-level streaming (returning chunked bytes to a browser), wrap
+     * this in Laravel's `response()->stream()` or Symfony StreamedResponse.
+     *
+     * @param  callable(string $chunk): void  $onChunk
+     */
+    public function stream(callable $onChunk): array
+    {
+        return $this->sendStream($onChunk);
     }
 
     /**
@@ -304,6 +413,16 @@ class ConversationBuilder
     }
 
     /**
+     * Get the JSON-schema request (null if not set).
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getSchema(): ?array
+    {
+        return $this->schema;
+    }
+
+    /**
      * Reset the conversation history (keeps system prompt and settings).
      */
     public function reset(): static
@@ -323,5 +442,111 @@ class ConversationBuilder
         $this->messages = $messages;
 
         return $this;
+    }
+
+    /**
+     * Append every entry from $messages to the running conversation.
+     * Use {@see setMessages()} to replace; use this to re-seed saved history.
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     */
+    public function history(array $messages): static
+    {
+        foreach ($messages as $message) {
+            $this->messages[] = $message;
+        }
+
+        return $this;
+    }
+
+    // ─────────────────────────────────────────────────────────
+    //  Internal helpers
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * Resolve the system prompt actually sent to the model. If a JSON-schema
+     * request was attached, append the schema as a JSON-Schema instruction.
+     */
+    protected function effectiveSystemPrompt(): string
+    {
+        if ($this->schema === null) {
+            return $this->systemPrompt;
+        }
+
+        $encoded = json_encode($this->schema, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+        return rtrim($this->systemPrompt)."\n\n".
+            'You MUST respond with a JSON object that conforms to this JSON Schema. '.
+            'Output ONLY valid JSON — no prose, no markdown fences:'.
+            "\n\n```json\n".$encoded."\n```";
+    }
+
+    /**
+     * Read a file (or pass through raw base64) and enforce the 15 MB limit.
+     */
+    protected function readAsBase64(string $source, string $kind): string
+    {
+        if (is_file($source)) {
+            $size = filesize($source);
+            if ($size === 0) {
+                throw new AiException("{$kind} file is empty: {$source}.");
+            }
+            if ($size > 15 * 1024 * 1024) {
+                throw new AiException(
+                    "{$kind} file exceeds 15 MB limit (".round($size / 1024 / 1024, 1).' MB). '.
+                    'Reduce the file size first.'
+                );
+            }
+            return base64_encode(file_get_contents($source));
+        }
+
+        return $source;
+    }
+
+    /**
+     * Resolve an image format string — accepts 'auto' (detect from extension)
+     * or a canonical name (jpeg, png, gif, webp).
+     */
+    protected function resolveImageFormat(string $source, string $format): string
+    {
+        if ($format !== 'auto') {
+            return $format;
+        }
+
+        $ext = strtolower(pathinfo($source, PATHINFO_EXTENSION));
+
+        return match ($ext) {
+            'jpg', 'jpeg' => 'jpeg',
+            'png' => 'png',
+            'gif' => 'gif',
+            'webp' => 'webp',
+            default => 'jpeg',
+        };
+    }
+
+    /**
+     * Resolve a document format string — accepts 'auto' (detect from extension)
+     * or a canonical name from the supported set.
+     */
+    protected function resolveDocumentFormat(string $source, string $format): string
+    {
+        if ($format !== 'auto') {
+            return $format;
+        }
+
+        $ext = strtolower(pathinfo($source, PATHINFO_EXTENSION));
+
+        return match ($ext) {
+            'pdf' => 'pdf',
+            'csv' => 'csv',
+            'doc' => 'doc',
+            'docx' => 'docx',
+            'xls' => 'xls',
+            'xlsx' => 'xlsx',
+            'html', 'htm' => 'html',
+            'txt', 'text' => 'txt',
+            'md', 'markdown' => 'md',
+            default => 'pdf',
+        };
     }
 }

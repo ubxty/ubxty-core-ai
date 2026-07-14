@@ -78,7 +78,11 @@ AZURE_OPENAI_DEFAULT_MODEL=my-gpt-4o-deployment
 
 ## 6. First call
 
-The `BedrockManager` is the canonical entry point in the Bedrock package:
+The `BedrockManager` is the canonical entry point in the Bedrock package. Install that provider before importing its manager:
+
+```bash
+composer require ubxty/bedrock-ai
+```
 
 ```php
 use Ubxty\BedrockAi\BedrockManager;

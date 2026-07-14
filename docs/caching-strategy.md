@@ -35,7 +35,7 @@ Every cache layer uses SHA256 content hashes so cache keys are deterministic acr
 | `embedding_ttl` | `{platform}_embeddings_{sha256(modelId\|dimensions\|text)}` | `{text: float[]}` row. |
 | `idempotency-key` (v2.1.0) | `{platform}-{sha256(modelId\|content)}` | Not stored — passed upstream. |
 
-`{platform}` is the lowercased `platformName()` output (`"bedrock_ai"`, `"azure_ai"`), which is why cache keys for one provider don't collide with another.
+`{platform}` is the lowercased `platformName()` output plus `_ai` (`"aws_bedrock_ai"`, `"azure_openai_ai"`), which is why cache keys for one provider don't collide with another.
 
 ---
 
@@ -80,14 +80,18 @@ For a static system prompt + 1k users each making 10 calls in an hour, all hitti
 - Without cache: 10,000 model calls × full input rate.
 - With cache: 1 model call × full rate + 9,999 hits × **0** cost (zero SDK round-trip, zero tokens billed).
 
+Cache hits still pass through `fireInvokedEvent()`. Core-ai's `AbstractAiManager` dispatches the canonical `AiInvoked`; a provider manager may override that dispatch method, so confirm provider-specific event aliases against the installed provider version.
+
 ---
 
 ## 3. Embedding cache (`cache.embedding_ttl`, v2.1.0)
 
 Embeddings are deterministic — same model + same text + same dimensions = same vector. The package memoise them per `(modelId, dimensions, sha256(text))` for 7 days by default (`604800` seconds).
 
+The `embed()` method is not part of core-ai's `AiManagerContract` or `AbstractAiManager`; it is implemented by the `ubxty/bedrock-ai` and `ubxty/azure-ai` provider managers. With one of those provider packages installed:
+
 ```php
-// BedrockManager / AzureManager
+// Ubxty\BedrockAi\BedrockManager or Ubxty\AzureAi\AzureManager
 $vectors = $manager->embed('amazon.titan-embed-text-v2:0', $corpus, dimensions: 1024);
 
 // First call: hits AWS Bedrock InvokeModel for every text. Caches rows.
@@ -139,19 +143,7 @@ Up to 4 cache-points per Converse request (Bedrock limit). The package only adds
 
 > **400 on unsupported models.** Bedrock returns a 400 if a `cachePoint` is placed on a model that doesn't support prompt caching. If you switch models and start seeing `400 cachePoint is not supported for this model`, drop the cache-points from config.
 
-### Azure (`cache_control: { type: 'ephemeral' }`)
-
-```php
-'azure_ai' => [
-    'prompt_caching' => [
-        'points' => ['system', 'last_user'],
-    ],
-],
-```
-
-Same anchors. The Azure OpenAI `cache_control` marker is set as `ephemeral` — Azure revalidates on every stream (Azure-side default, not configurable by client).
-
-Up to 4 breakpoints per chat-completion call.
+The published core-ai config exposes prompt-cache settings only under `core-ai.bedrock.prompt_caching`. If another provider version supports upstream prompt caching, use that provider's documented configuration rather than assuming the Bedrock keys apply.
 
 ### Cost math (worked)
 

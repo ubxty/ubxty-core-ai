@@ -184,12 +184,12 @@ All 19 methods are documented in [`/docs/real-world-patterns.md`](docs/real-worl
 
 | Helper | Purpose |
 |---|---|
-| `cachePrefix(): string` | Lowercased platform name used as cache-key prefix (e.g. `"bedrock_ai"`). |
+| `cachePrefix(): string` | Lowercased platform name used as cache-key prefix (e.g. `"aws_bedrock_ai"` for `platformName() = "AWS Bedrock"`, `"azure_openai_ai"` for `platformName() = "Azure OpenAI"`). |
 | `checkCostLimits(): void` | Called at the top of `invoke()` / `converse()`. Throws `CostLimitExceededException` on hit. |
 | `trackCost(float $cost): void` | Called after a successful invocation. Cache-locked daily + monthly. |
 | `fireInvokedEvent(array $result): void` | Dispatches `AiInvoked`. |
 | `calculateCost(int $inputTokens, int $outputTokens, ?array $pricing): float` | Returns rounded cost. |
-| `clampMaxTokens($modelId, $requested, $concatContent = '', $precomputedInputTokens = 0): array{0:int,1:array,2:int}` | v2.1.0 — silent maxTokens downscale + fits gate. |
+| `clampMaxTokens(string $modelId, int $requested, string $concatContentForEstimate = '', int $precomputedInputTokens = 0): array{0:int,1:array,2:int}` | v2.1.0 — silent maxTokens downscale + fits gate. |
 | `responseCacheKey($modelId, $system, $user, $maxTokens, $temp): string` | v2.1.0 — SHA256 cache key for `invoke()`. |
 | `responseCacheKeyConverse($modelId, $system, $messages, $maxTokens, $temp): string` | v2.1.0 — SHA256 cache key for `converse()`. |
 | `getDefaultKey(): array` | First key in the default connection. |
@@ -251,7 +251,7 @@ Important: enable only when the prompt is deterministic for a given set of input
 
 ```php
 $key = $manager->idempotencyKey($modelId, $systemPrompt.$userMessage);
-// "bedrock_ai-<sha256 hash>"
+// "aws_bedrock_ai-<sha256 hash>"
 ```
 
 ### 4. Embedding cache (`cache.embedding_ttl`)
@@ -274,10 +274,9 @@ try {
 
 ### 6. Prompt caching (provider-specific)
 
-The Bedrock and Azure provider packages implement their own wire-format caching on top of core-ai:
+The Bedrock provider package implements wire-format caching on top of core-ai:
 
 - **Bedrock** — `cachePoint: { type: 'default' }` markers injected on `Converse` content arrays. Configured via `core-ai.bedrock.prompt_caching.points`.
-- **Azure OpenAI** — `cache_control: { type: 'ephemeral' }` on chat-completion content parts. Configured via `core-ai.azure_ai.prompt_caching.points`.
 
 See [`/docs/caching-strategy.md`](docs/caching-strategy.md) for the full deep-dive including a worked "before/after v2.1.0" cost comparison.
 
@@ -302,6 +301,8 @@ trait HasRetryLogic {
 
 ### Override hooks (in subclasses)
 
+`HasRetryLogic` defines the retry control flow, but its `onKeyRotated()` and `onRateLimitExhausted()` hooks are empty in core-ai. Provider packages override these hooks when they need to dispatch provider-specific lifecycle events.
+
 | Hook | Override to |
 |---|---|---|---|
 | `withRetry(string $modelId, callable $callback): array` | The main retry+rotation loop. Most providers don't override this directly — base behaviour is correct. |
@@ -309,8 +310,8 @@ trait HasRetryLogic {
 | `isRateLimitError(string $message): bool` | Add platform-specific rate-limit fingerprints. |
 | `extractFriendlyError(string $errorMessage): string` | Map raw provider errors to user-friendly text. |
 | `resetPlatformClient(): void` | Drop a cached SDK client (e.g. when rotating IAM creds). |
-| `onKeyRotated(array $fromKey, array $toKey, string $reason, string $modelId): void` | Fire a `AiKeyRotated` event. |
-| `onRateLimitExhausted(string $modelId, array $key, int $retryAttempt): void` | Fire a `AiRateLimited` event. |
+| `onKeyRotated(array $fromKey, array $toKey, string $reason, string $modelId): void` | Dispatch an `AiKeyRotated` event (core-ai's default hook is empty). |
+| `onRateLimitExhausted(string $modelId, array $key, int $retryAttempt): void` | Dispatch an `AiRateLimited` event (core-ai's default hook is empty). |
 | `calculateCost(int $in, int $out, ?array $pricing): float` | Provider-specific cost math. |
 
 ### Default behaviour
@@ -487,7 +488,7 @@ The logger never logs the `response` body — only counters and metadata. Pair w
 
 ## Events
 
-Three `Dispatchable` events fire from the retry + invocation lifecycle. Listen on them with a normal Laravel listener.
+Core-ai defines three `Dispatchable` event payloads. `AbstractAiManager` dispatches `AiInvoked` after successful invocations. The default `HasRetryLogic` hooks for key rotation and rate-limit exhaustion are empty; provider packages decide whether to dispatch `AiKeyRotated` and `AiRateLimited` from their overrides.
 
 ### `AiInvoked`
 
@@ -518,7 +519,7 @@ new AiKeyRotated(
 );
 ```
 
-Fires once per rotation. Critical for alerting on rate-limit-prone keys.
+Provider packages may dispatch this from an `onKeyRotated()` override. Core-ai's default hook is empty.
 
 ### `AiRateLimited`
 
@@ -532,9 +533,7 @@ new AiRateLimited(
 );
 ```
 
-Fires after every sleep-before-retry decision in `withRetry()`.
-
-> The provider packages also fire deprecated BC aliases (`BedrockInvoked`, `AzureInvoked`, …). Prefer the canonical `AiInvoked` in new code.
+Provider packages may dispatch this from an `onRateLimitExhausted()` override. Core-ai's retry loop does not dispatch it before retry sleeps, and the default exhaustion hook is empty.
 
 ---
 
@@ -583,7 +582,7 @@ The full `config/core-ai.php` ships with these top-level keys. **Provider packag
 | `logging.enabled` | `false` | Enable the invocation logger. |
 | `logging.channel` | `stack` | Any configured Laravel log channel. |
 
-Provider-specific keys (`core-ai.bedrock.*`, `core-ai.azure_ai.*`) include `connections`, `keys`, `pricing`, `usage`, `billing`, `cache`, `providers.disabled_providers`, `providers.chat.disabled_providers`, `providers.image.disabled_providers`, `defaults`, `aliases`, `models`, `logging`, `health_check`, `prompt_caching`, and `limits`. See each provider's README for the full reference.
+Both provider blocks (`core-ai.bedrock.*`, `core-ai.azure_ai.*`) include `default`, `connections` (with nested `keys`), `retry`, `limits`, `cache`, `providers.disabled_providers`, `providers.chat.disabled_providers`, `providers.image.disabled_providers`, `defaults`, `aliases`, `models`, `logging`, and `health_check`. Bedrock additionally includes `pricing`, `usage`, and `prompt_caching`; those keys are not part of the Azure block. See each provider's README for the full reference.
 
 > **Don't dump the config file in your README.** Read [`ubxty/bedrock-ai` README § Configuration](https://github.com/ubxty/ubxty-bedrock-ai) for the canonical shape; copying it here would diverge on the next bump.
 
@@ -676,7 +675,8 @@ Report vulnerabilities via `info.ubxty@gmail.com`. PGP key on request.
 
 See [CHANGELOG.md](CHANGELOG.md). Past minor versions:
 
-- **2.1.2** — Documentation overhaul (this release). No API changes.
+- **2.1.3** — ConversationBuilder helpers plus corrections that bring the v2.1.2 docs in line with the shipped config and event hooks.
+- **2.1.2** — Documentation overhaul. No API changes.
 - **2.1.1** — `setPromptCachePoints()` + `setRetryAfterSeconds()` on the canonical `HasRetryLogic` trait; `Retry-After` honouring.
 - **2.1.0** — `clampMaxTokens()`, response-cache layer, `idempotencyKey()`. New cache TTL knobs (`response_ttl`, `embedding_ttl`). Bedrock `prompt_caching` config block.
 - **2.0.0** — Unified `core-ai` namespace. `bedrock`/`azure_ai` config blocks now live under one file.

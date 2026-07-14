@@ -1,6 +1,6 @@
 # Events and Listeners
 
-> Companion to the [README](../README.md). Reference for the three lifecycle events dispatched by core-ai (and the BC aliases dispatched by the provider packages), plus ready-to-use listener templates.
+> Companion to the [README](../README.md). Reference for the three lifecycle event payloads defined by core-ai, the canonical `AiInvoked` dispatch, and the retry hooks that provider packages can override to dispatch rotation and rate-limit events.
 
 ---
 
@@ -12,7 +12,7 @@ Every successful invocation returns an array with `cost`, `latency_ms`, `key_use
 - Fan-out (one invocation can drive N listeners — usage log + cost cap + cache warmer + audit).
 - Test isolation (assert on the event, not on a final state).
 
-This document lists the three core events, the deprecated provider-specific BC aliases, and three ready-to-use listener templates.
+This document lists the three core event payloads, the provider override points, version-dependent provider aliases, and ready-to-use listener templates.
 
 ---
 
@@ -106,7 +106,7 @@ class AiKeyRotated
 
 ### When it fires
 
-Inside `HasRetryLogic::withRetry()`, after `$this->credentials->next()` succeeds. The default hook in the abstract trait calls `event(new AiKeyRotated(...))`.
+Inside `HasRetryLogic::withRetry()`, after `$this->credentials->next()` succeeds, the trait calls `onKeyRotated()`. Core-ai's default hook is empty. Provider packages must override `onKeyRotated()` if they want to dispatch `AiKeyRotated` or a provider-named subclass.
 
 ### Listener template — pager alert
 
@@ -143,7 +143,7 @@ class PageOnKeyRotation
 
 ## `AiRateLimited`
 
-Fires on every retry-sleep decision inside `withRetry()`. Useful for SLO dashboards and exhaustion alerts.
+Represents rate-limit exhaustion when a provider package chooses to dispatch it from `onRateLimitExhausted()`. Useful for SLO dashboards and exhaustion alerts.
 
 ```php
 namespace Ubxty\CoreAi\Events;
@@ -166,10 +166,7 @@ class AiRateLimited
 
 ### When it fires
 
-Two places:
-
-- Inside the inner retry loop — `withRetry()` calls `event(new AiRateLimited(...))` before sleeping, with the `Retry-After`-honoured wait time.
-- When all keys are exhausted on rate-limit — the `onRateLimitExhausted` hook also dispatches this event with `waitSeconds: 0`.
+Core-ai's `HasRetryLogic` trait does not dispatch `AiRateLimited` in the inner retry loop. When all keys are exhausted on a rate-limit, it calls `onRateLimitExhausted()`; the default hook is empty. Provider packages must override that hook to dispatch `AiRateLimited` or a provider-named subclass, typically with `waitSeconds: 0`.
 
 ### Listener template — SLO dashboard counter
 
@@ -198,72 +195,71 @@ class IncrementRateLimitCounter
 
 ---
 
-## Deprecated BC aliases
+## Provider-package BC aliases
 
-The provider packages (bedrock-ai, azure-ai) fire provider-specific events that existed before `core-ai` standardised on the canonical event names. They are still dispatched for backward compatibility, but new code should prefer the canonical events above.
+Provider packages may retain provider-named subclasses of the canonical core-ai event payloads for backward compatibility. In versions that implement these aliases, the relationship is:
 
 ```php
-// Deprecated (still fires):
-Ubxty\BedrockAi\Events\BedrockInvoked   extends Ubxty\CoreAi\Events\AiInvoked
+Ubxty\BedrockAi\Events\BedrockInvoked extends Ubxty\CoreAi\Events\AiInvoked
 Ubxty\BedrockAi\Events\BedrockKeyRotated extends Ubxty\CoreAi\Events\AiKeyRotated
 Ubxty\BedrockAi\Events\BedrockRateLimited extends Ubxty\CoreAi\Events\AiRateLimited
-Ubxty\AzureAi\Events\AzureInvoked       extends Ubxty\CoreAi\Events\AiInvoked
-Ubxty\AzureAi\Events\AzureKeyRotated    extends Ubxty\CoreAi\Events\AiKeyRotated
-Ubxty\AzureAi\Events\AzureRateLimited   extends Ubxty\CoreAi\Events\AiRateLimited
+Ubxty\AzureAi\Events\AzureInvoked extends Ubxty\CoreAi\Events\AiInvoked
+Ubxty\AzureAi\Events\AzureKeyRotated extends Ubxty\CoreAi\Events\AiKeyRotated
+Ubxty\AzureAi\Events\AzureRateLimited extends Ubxty\CoreAi\Events\AiRateLimited
 ```
 
-Both the deprecated and canonical events fire on every successful invocation. Listeners attached to the canonical name see all providers. Listeners attached to the deprecated name only see that one provider.
-
-Schedule of canonical names: core-ai v2.0.0 (consolidated the events into the canonical namespace). Schedule of deprecation: TBD in the v2.3 line — once stats scripts migrate.
+These classes and their dispatch policy belong to the installed provider version, not to core-ai. Confirm that version's source or changelog before relying on a provider-named alias or assuming that both alias and canonical class names are dispatched separately. New code should prefer the canonical core-ai payloads where the provider supports them.
 
 ---
 
-## Test recipe
+## Provider-package test recipe
 
-Listen to events in feature tests without running a model:
+This recipe uses `BedrockManager`, so it registers only when the Bedrock provider package is installed:
 
 ```php
 use Illuminate\Support\Facades\Event;
-use Ubxty\CoreAi\Events\AiInvoked;
 use Ubxty\BedrockAi\BedrockManager;
+use Ubxty\BedrockAi\Events\BedrockInvoked;
 
-it('fires AiInvoked with the cost of a successful invocation', function () {
-    Event::fake([AiInvoked::class]);
+if (class_exists(BedrockManager::class)) {
+    it('fires the provider invocation event with the cost of a successful invocation', function () {
+        Event::fake([BedrockInvoked::class]);
 
-    // Bind a stub manager that returns a known cost.
-    $stub = new class([]) extends BedrockManager {
-        public function __construct($c) { parent::__construct(['default' => 'x', 'connections' => ['x' => ['keys' => [['label'=>'l','api_key'=>'']]]]); }
-        protected function performInvoke(string $m, string $s, string $u, int $mt, float $t, ?array $p, ?string $c): array
-        {
-            return [
-                'response' => 'ok',
-                'input_tokens' => 10, 'output_tokens' => 5,
-                'total_tokens' => 15, 'cost' => 0.0001,
-                'latency_ms' => 1, 'status' => 'ok',
-                'key_used' => 'Primary', 'model_id' => 'stub',
-            ];
-        }
-    };
+        // Bind a stub manager that returns a known cost.
+        $stub = new class([]) extends BedrockManager {
+            public function __construct($c) { parent::__construct(['default' => 'x', 'connections' => ['x' => ['keys' => [['label'=>'l','api_key'=>'']]]]); }
+            protected function performInvoke(string $m, string $s, string $u, int $mt, float $t, ?array $p, ?string $c): array
+            {
+                return [
+                    'response' => 'ok',
+                    'input_tokens' => 10, 'output_tokens' => 5,
+                    'total_tokens' => 15, 'cost' => 0.0001,
+                    'latency_ms' => 1, 'status' => 'ok',
+                    'key_used' => 'Primary', 'model_id' => 'stub',
+                ];
+            }
+        };
 
-    $stub->invoke('stub', 'sys', 'user', 256, 0.2);
+        $stub->invoke('stub', 'sys', 'user', 256, 0.2);
 
-    Event::assertDispatched(AiInvoked::class, function (AiInvoked $e) {
-        return $e->modelId === 'stub' && $e->cost === 0.0001;
+        Event::assertDispatched(BedrockInvoked::class, function (BedrockInvoked $e) {
+            return $e->modelId === 'stub' && $e->cost === 0.0001;
+        });
     });
-});
+}
 ```
 
 ---
 
 ## Ordering guarantees
 
-Events fire in the following order within a single invocation:
+The core lifecycle and provider override points run in this order within a single invocation:
 
-1. Inner retry loop decides to sleep → `AiRateLimited` (per attempt).
-2. Inner retry loop exhausts retries on rate-limit → `onRateLimitExhausted` hook → `AiRateLimited` (waitSeconds: 0).
+1. Inner retry loop decides to sleep → core-ai sleeps without dispatching `AiRateLimited`.
+2. Inner retry loop exhausts retries on a rate-limit → `onRateLimitExhausted` hook; an event fires only if the provider package overrides the empty core hook.
 3. Inner retry loop gives up → `AiException` thrown (or `RateLimitException`).
-4. Outer key rotation succeeds → `onKeyRotated` → `AiKeyRotated`.
-5. Successful invocation completes → `fireInvokedEvent` → `AiInvoked`.
+4. Outer key rotation succeeds → `onKeyRotated`; an event fires only if the provider package overrides the empty core hook.
+5. Successful invocation completes → `fireInvokedEvent` → canonical `AiInvoked` from `AbstractAiManager`, unless a provider manager overrides that dispatch method.
 
 If you write to the same store in multiple listeners, be aware that listener execution order is the order they were registered. Use `Event::listen(…, $priority)` to control ordering explicitly.
 

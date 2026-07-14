@@ -338,7 +338,7 @@ $dynamic = $manager->invoke(
 For explicit invalidation, use the Laravel cache facade directly:
 
 ```php
-Cache::forget('bedrock_ai_response_'.hash('sha256', "model|$system|$user|1024|0.2"));
+Cache::forget('aws_bedrock_ai_response_'.hash('sha256', "model|$system|$user|1024|0.2"));
 ```
 
 (Note: build the key identically to how `responseCacheKey()` builds it. Don't invalidate by guessing.)

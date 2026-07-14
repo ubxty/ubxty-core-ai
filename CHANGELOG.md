@@ -6,6 +6,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.1.3] - 2026-07-14
+
+### Documentation
+- README.md L280: removed the `core-ai.azure_ai.prompt_caching.points` claim (no such key in config).
+- README.md L586: removed `billing` from the "provider-specific keys" list (no such key).
+- README.md L148/L165/L187/L254: corrected `cachePrefix()` examples from `"bedrock_ai"` to `"aws_bedrock_ai"` to match `platformName() = "AWS Bedrock"`.
+- README.md L192: corrected parameter name to `concatContentForEstimate`.
+- README.md L679: added cross-link noting v2.1.2 doc-only corrections (this release).
+- docs/events-and-listeners.md: distinguished core-ai's empty `HasRetryLogic` hooks from provider-package overrides that actually dispatch `AiKeyRotated` / `AiRateLimited`.
+- docs/getting-started.md: added the `composer require ubxty/bedrock-ai` line before the `BedrockManager` `use`.
+- docs/caching-strategy.md: clarified `$manager->embed(...)` is a provider-package method, not part of the `AiManagerContract`.
+- docs/caching-strategy.md: clarified provider-package events vs canonical `AiInvoked`.
+
+### Added (ConversationBuilder)
+- `userWithDocuments(string $prompt, array $documents)` — multi-document single-message helper. Each $documents entry is a string path or assoc `{path, format?, name?}`.
+- `userWithAttachments(string $prompt, array $attachments)` — mixed image/document attachments in a single user message. Each entry is assoc `{type:'image'|'document', path, format?, name?}`.
+- `image(string $source, string $prompt = '', string $format = 'auto')` — shorthand for `userWithImage()`.
+- `model(string $modelId)` — overrides the model ID mid-build.
+- `history(array $messages)` — appends every entry to the running conversation (use `setMessages()` to replace).
+- `schema(array $jsonSchema)` — request a JSON response conforming to a JSON Schema; appended to the system prompt as an instruction (advisory, not a wire-format constraint).
+- `stream(callable $onChunk): array` — alias for `sendStream()`; same assembled result array.
+- `getSchema(): ?array` — accessor.
+
+### Changed
+- `userWithImage()` and `userWithDocument()` now route through private `readAsBase64()` / `resolveImageFormat()` / `resolveDocumentFormat()` helpers — no behaviour change for callers; empty-file guard added to both.
+- `send()` and `sendStream()` now use the schema-augmented system prompt when `schema()` was set (no change when schema is null).
+
+### Notes
+- New methods are additive; nothing changed in the existing public API.
+- The ConversationBuilder changes ship as a feature-level add-on; the doc fixes are independent corrections that the docs were ahead of the code on.
+
+---
+
 ## [2.1.2] - 2026-07-13
 
 ### Documentation

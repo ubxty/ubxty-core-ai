@@ -61,7 +61,7 @@ A: The cache key is content-derived, so changing any of `model`, `system`, `user
 ```php
 use Illuminate\Support\Facades\Cache;
 
-$prefix = 'bedrock_ai_response';
+$prefix = 'aws_bedrock_ai_response';
 $suffix = hash('sha256', "{model}|{system}|{user}|{maxTokens}|{temperature}");
 Cache::forget("$prefix_$suffix");
 ```
@@ -122,9 +122,9 @@ Event::listen(AiInvoked::class, fn (AiInvoked $e) => …);
 
 **Q: Why do I get two events per invocation?**
 
-A: The provider package (bedrock-ai, azure-ai) fires both its deprecated BC alias (`BedrockInvoked`, `AzureInvoked`) AND the canonical `AiInvoked`. They both extend `AiInvoked`, so a listener attached to `AiInvoked` will fire once per canonical event — but if you listen on the concrete subclass and the canonical class, you get two events.
+A: `ubxty/bedrock-ai` and `ubxty/azure-ai` have historically dispatched provider-named events alongside or instead of the canonical payload classes. The exact dispatch policy is provider-version-specific, so confirm it against the installed provider's source or changelog. If both event class names are dispatched in your version and you register listeners for both, the same logical invocation can be observed twice.
 
-To consolidate, listen only on `AiInvoked`.
+To consolidate, prefer the canonical event when your installed provider dispatches it.
 
 ---
 
