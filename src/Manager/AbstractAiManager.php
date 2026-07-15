@@ -414,6 +414,26 @@ abstract class AbstractAiManager implements AiManagerContract
                 throw new CostLimitExceededException('monthly', (float) $monthlyLimit, $monthlyCost);
             }
         }
+
+        // Tenant cost cap seam (T2-PR3): if the host application binds a
+        // TenantCostCapResolver, surface the tenant's daily / monthly caps
+        // here. The core package does NOT enforce them — T3-PR6 owns the
+        // throw path in app/Services/UbxtyAiManagerService. This block just
+        // makes the contract visible so a future per-tenant enforcement
+        // point can plug in without touching AbstractAiManager again.
+        $container = function_exists('app') ? app() : null;
+        if ($container !== null && $container->bound(\Ubxty\CoreAi\Contracts\TenantCostCapResolver::class)) {
+            $tenantId = function_exists('tenant') ? tenant('id') : null;
+            if (is_int($tenantId) || is_numeric($tenantId)) {
+                $cap = $container->make(\Ubxty\CoreAi\Contracts\TenantCostCapResolver::class)
+                    ->resolve((int) $tenantId);
+                if ($cap->daily > 0.0 || $cap->monthly > 0.0) {
+                    /* platform-side already tracks; this PR only adds the
+                     * contract seam — actual enforcement happens in
+                     * app/Services/UbxtyAiManagerService per T3-PR6 */
+                }
+            }
+        }
     }
 
     protected function trackCost(float $cost): void
