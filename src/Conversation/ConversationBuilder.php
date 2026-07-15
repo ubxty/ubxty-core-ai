@@ -3,7 +3,9 @@
 namespace Ubxty\CoreAi\Conversation;
 
 use Ubxty\CoreAi\Contracts\AiManagerContract;
+use Ubxty\CoreAi\Contracts\ConversationCompactor;
 use Ubxty\CoreAi\Exceptions\AiException;
+use Ubxty\CoreAi\Support\CompactionContext;
 use Ubxty\CoreAi\Support\TokenEstimator;
 
 class ConversationBuilder
@@ -27,6 +29,8 @@ class ConversationBuilder
 
     /** @var array<string, mixed> */
     protected array $toolConfig = [];
+
+    protected ?ConversationCompactor $compactor = null;
 
     protected AiManagerContract $manager;
 
@@ -336,9 +340,11 @@ class ConversationBuilder
      */
     public function send(): array
     {
+        $messages = $this->compactMessages();
+
         $result = $this->manager->converse(
             $this->modelId,
-            $this->messages,
+            $messages,
             $this->effectiveSystemPrompt(),
             $this->maxTokens,
             $this->temperature,
@@ -358,9 +364,11 @@ class ConversationBuilder
      */
     public function sendStream(callable $onChunk): array
     {
+        $messages = $this->compactMessages();
+
         $result = $this->manager->converseStream(
             $this->modelId,
-            $this->messages,
+            $messages,
             $onChunk,
             $this->effectiveSystemPrompt(),
             $this->maxTokens,
@@ -469,6 +477,20 @@ class ConversationBuilder
     }
 
     /**
+     * Register a {@see ConversationCompactor} to trim the running history
+     * before each SDK call. The compactor is invoked with the current
+     * `$messages` array and a default {@see CompactionContext}.
+     *
+     * Untouched when not called — the SDK sees the full history.
+     */
+    public function compact(ConversationCompactor $c): static
+    {
+        $this->compactor = $c;
+
+        return $this;
+    }
+
+    /**
      * Reset the conversation history (keeps system prompt and settings).
      */
     public function reset(): static
@@ -525,6 +547,24 @@ class ConversationBuilder
             'You MUST respond with a JSON object that conforms to this JSON Schema. '.
             'Output ONLY valid JSON — no prose, no markdown fences:'.
             "\n\n```json\n".$encoded."\n```";
+    }
+
+    /**
+     * Run the registered compactor (if any) over the message history.
+     *
+     * Returns the original array verbatim when no compactor is registered so
+     * downstream SDK calls see the same shape they would have without the
+     * T2-PR2 contract.
+     *
+     * @return array<int, array{role: string, content: string|array}>
+     */
+    protected function compactMessages(): array
+    {
+        if ($this->compactor === null) {
+            return $this->messages;
+        }
+
+        return $this->compactor->compact($this->messages, new CompactionContext())->recent;
     }
 
     /**
