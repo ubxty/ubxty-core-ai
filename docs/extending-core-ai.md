@@ -394,10 +394,14 @@ return [
     ],
 
     'models' => array_filter([
-        'default' => array_filter(array_map(
-            fn ($m) => is_array($m) ? $m : null,
-            json_decode((string) env('ACME_AI_MODELS', '[]'), true) ?: [],
-        )),
+        'default' => (function () {
+            $ids = array_filter(array_map('trim', explode(',', (string) env('ACME_AI_MODELS', ''))));
+
+            return array_filter(array_combine(
+                $ids,
+                array_map(fn (string $id) => ['name' => $id], $ids),
+            ));
+        })(),
     ]),
 
     'logging' => [
