@@ -5,6 +5,7 @@ namespace Ubxty\CoreAi\Contracts;
 use Ubxty\CoreAi\Client\ModelAliasResolver;
 use Ubxty\CoreAi\Conversation\ConversationBuilder;
 use Ubxty\CoreAi\Logging\InvocationLogger;
+use Ubxty\CoreAi\Support\CacheKeyContext;
 
 interface AiManagerContract
 {
@@ -20,7 +21,8 @@ interface AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?array $pricing = null,
-        ?string $connection = null
+        ?string $connection = null,
+        ?CacheKeyContext $ctx = null
     ): array;
 
     /**
@@ -36,7 +38,8 @@ interface AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?string $connection = null,
-        ?array $pricing = null
+        ?array $pricing = null,
+        ?CacheKeyContext $ctx = null
     ): array;
 
     /**
@@ -53,7 +56,8 @@ interface AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?string $connection = null,
-        ?array $pricing = null
+        ?array $pricing = null,
+        ?CacheKeyContext $ctx = null
     ): array;
 
     /**

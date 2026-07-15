@@ -12,6 +12,7 @@ use Ubxty\CoreAi\Exceptions\ConfigurationException;
 use Ubxty\CoreAi\Exceptions\CostLimitExceededException;
 use Ubxty\CoreAi\Logging\InvocationLogger;
 use Ubxty\CoreAi\Models\ModelSpecResolver;
+use Ubxty\CoreAi\Support\CacheKeyContext;
 use Ubxty\CoreAi\Support\TokenEstimator;
 
 abstract class AbstractAiManager implements AiManagerContract
@@ -39,7 +40,8 @@ abstract class AbstractAiManager implements AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?array $pricing = null,
-        ?string $connection = null
+        ?string $connection = null,
+        ?CacheKeyContext $ctx = null
     ): array {
         $modelId = $modelId ?: $this->defaultModel();
 
@@ -64,7 +66,7 @@ abstract class AbstractAiManager implements AiManagerContract
         // when cache.response_ttl > 0. Skip on streaming / explicit bypass.
         $responseTtl = (int) ($this->config['cache']['response_ttl'] ?? 0);
         if ($responseTtl > 0) {
-            $cacheKey = $this->responseCacheKey($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature);
+            $cacheKey = $this->responseCacheKey($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature, $ctx);
             $cached = Cache::get($cacheKey);
 
             if (is_array($cached)) {
@@ -83,7 +85,7 @@ abstract class AbstractAiManager implements AiManagerContract
         $this->getLogger()->log($result);
 
         if ($responseTtl > 0) {
-            $cacheKey ??= $this->responseCacheKey($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature);
+            $cacheKey ??= $this->responseCacheKey($modelId, $systemPrompt, $userMessage, $maxTokens, $temperature, $ctx);
             Cache::put($cacheKey, $result, $responseTtl);
         }
 
@@ -97,7 +99,8 @@ abstract class AbstractAiManager implements AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?string $connection = null,
-        ?array $pricing = null
+        ?array $pricing = null,
+        ?CacheKeyContext $ctx = null
     ): array {
         $this->checkCostLimits();
 
@@ -110,7 +113,7 @@ abstract class AbstractAiManager implements AiManagerContract
         // Response-cache: hash on canonical message array + parameters.
         $responseTtl = (int) ($this->config['cache']['response_ttl'] ?? 0);
         if ($responseTtl > 0) {
-            $cacheKey = $this->responseCacheKeyConverse($modelId, $systemPrompt, $messages, $maxTokens, $temperature);
+            $cacheKey = $this->responseCacheKeyConverse($modelId, $systemPrompt, $messages, $maxTokens, $temperature, $ctx);
             $cached = Cache::get($cacheKey);
 
             if (is_array($cached)) {
@@ -132,7 +135,7 @@ abstract class AbstractAiManager implements AiManagerContract
         $this->getLogger()->log($result);
 
         if ($responseTtl > 0) {
-            $cacheKey ??= $this->responseCacheKeyConverse($modelId, $systemPrompt, $messages, $maxTokens, $temperature);
+            $cacheKey ??= $this->responseCacheKeyConverse($modelId, $systemPrompt, $messages, $maxTokens, $temperature, $ctx);
             Cache::put($cacheKey, $result, $responseTtl);
         }
 
@@ -147,7 +150,8 @@ abstract class AbstractAiManager implements AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?string $connection = null,
-        ?array $pricing = null
+        ?array $pricing = null,
+        ?CacheKeyContext $ctx = null
     ): array {
         $this->checkCostLimits();
 
@@ -464,6 +468,22 @@ abstract class AbstractAiManager implements AiManagerContract
     }
 
     /**
+     * Build a tenant/conversation/prompt-version-scoped cache namespace.
+     *
+     * Shape: "<prefix>:t<tenantId>:c<conversationId>:v<promptVersion>:<scope>".
+     * A null context (or null fields) degrades to the shared "t0:c0:v0" bucket
+     * so callers that don't opt into scoping keep deterministic keys.
+     */
+    protected function cacheNamespace(?CacheKeyContext $ctx, string $scope): string
+    {
+        $tenant = $ctx?->tenantId ?? 0;
+        $conversation = $ctx?->conversationId ?? 0;
+        $version = $ctx?->promptVersion ?? 0;
+
+        return $this->cachePrefix().":t{$tenant}:c{$conversation}:v{$version}:{$scope}";
+    }
+
+    /**
      * Build a deterministic response-cache key for `invoke()`.
      */
     protected function responseCacheKey(
@@ -471,7 +491,8 @@ abstract class AbstractAiManager implements AiManagerContract
         string $systemPrompt,
         string $userMessage,
         int $maxTokens,
-        float $temperature
+        float $temperature,
+        ?CacheKeyContext $ctx = null
     ): string {
         $raw = implode('|', [
             $modelId,
@@ -481,7 +502,7 @@ abstract class AbstractAiManager implements AiManagerContract
             (string) $temperature,
         ]);
 
-        return $this->cachePrefix().'_response_'.hash('sha256', $raw);
+        return $this->cacheNamespace($ctx, 'response').'_'.hash('sha256', $raw);
     }
 
     /**
@@ -492,7 +513,8 @@ abstract class AbstractAiManager implements AiManagerContract
         string $systemPrompt,
         array $messages,
         int $maxTokens,
-        float $temperature
+        float $temperature,
+        ?CacheKeyContext $ctx = null
     ): string {
         $raw = implode('|', [
             $modelId,
@@ -502,7 +524,7 @@ abstract class AbstractAiManager implements AiManagerContract
             (string) $temperature,
         ]);
 
-        return $this->cachePrefix().'_response_'.hash('sha256', $raw);
+        return $this->cacheNamespace($ctx, 'response').'_'.hash('sha256', $raw);
     }
 
     /**

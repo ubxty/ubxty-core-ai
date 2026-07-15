@@ -22,7 +22,7 @@ return [
         'models_ttl'  => 3600,
         'usage_ttl'   => 900,
         'pricing_ttl' => 86400,
-        'response_ttl' => 0,       // v2.1.0 — cache provider responses (invoke/converse) when > 0. 0 disables.
+        'response_ttl' => (int) env('CORE_AI_RESPONSE_TTL', 300), // v2.1.0 — cache provider responses (invoke/converse) when > 0. 0 disables.
         'embedding_ttl' => 604800, // v2.1.0 — 7 days; embeddings are deterministic and expensive.
     ],
 
