@@ -55,11 +55,12 @@ abstract class AbstractAiManager implements AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?string $connection = null,
-        ?array $pricing = null
+        ?array $pricing = null,
+        ?array $cachePointsOverride = null
     ): array {
         return $this->converseWithContext(
             $modelId, $messages, $systemPrompt, $maxTokens, $temperature,
-            $connection, $pricing, null
+            $connection, $pricing, null, $cachePointsOverride
         );
     }
 
@@ -71,11 +72,12 @@ abstract class AbstractAiManager implements AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?string $connection = null,
-        ?array $pricing = null
+        ?array $pricing = null,
+        ?array $cachePointsOverride = null
     ): array {
         return $this->converseStreamWithContext(
             $modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature,
-            $connection, $pricing, null
+            $connection, $pricing, null, $cachePointsOverride
         );
     }
 
@@ -160,7 +162,8 @@ abstract class AbstractAiManager implements AiManagerContract
         float $temperature = 0.7,
         ?string $connection = null,
         ?array $pricing = null,
-        ?CacheKeyContext $ctx = null
+        ?CacheKeyContext $ctx = null,
+        ?array $cachePointsOverride = null
     ): array {
         $this->checkCostLimits();
 
@@ -185,7 +188,7 @@ abstract class AbstractAiManager implements AiManagerContract
             }
         }
 
-        $result = $this->performConverse($modelId, $messages, $systemPrompt, $maxTokens, $temperature, $connection);
+        $result = $this->performConverse($modelId, $messages, $systemPrompt, $maxTokens, $temperature, $connection, $cachePointsOverride);
 
         $cost = $this->calculateCost($result['input_tokens'] ?? 0, $result['output_tokens'] ?? 0, $pricing);
         $result['cost'] = $cost;
@@ -217,7 +220,8 @@ abstract class AbstractAiManager implements AiManagerContract
         float $temperature = 0.7,
         ?string $connection = null,
         ?array $pricing = null,
-        ?CacheKeyContext $ctx = null
+        ?CacheKeyContext $ctx = null,
+        ?array $cachePointsOverride = null
     ): array {
         $this->checkCostLimits();
 
@@ -258,7 +262,7 @@ abstract class AbstractAiManager implements AiManagerContract
             );
         }
 
-        $result = $this->performConverseStream($modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature, $connection);
+        $result = $this->performConverseStream($modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature, $connection, $cachePointsOverride);
 
         $cost = $this->calculateCost($result['input_tokens'] ?? 0, $result['output_tokens'] ?? 0, $pricing);
         $result['cost'] = $cost;
@@ -306,7 +310,8 @@ abstract class AbstractAiManager implements AiManagerContract
         string $systemPrompt,
         int $maxTokens,
         float $temperature,
-        ?string $connection
+        ?string $connection,
+        ?array $cachePointsOverride = null
     ): array;
 
     /**
@@ -322,7 +327,8 @@ abstract class AbstractAiManager implements AiManagerContract
         string $systemPrompt,
         int $maxTokens,
         float $temperature,
-        ?string $connection
+        ?string $connection,
+        ?array $cachePointsOverride = null
     ): array;
 
     // ─────────────────────────────────────────────────────────

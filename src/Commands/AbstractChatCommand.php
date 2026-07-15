@@ -25,6 +25,72 @@ abstract class AbstractChatCommand extends Command
 
     abstract protected function platformName(): string;
 
+    /** Per-session cache-mode choice. null = use package config (no override). */
+    protected ?bool $cachingEnabled = null;
+
+    /**
+     * Whether this model supports some form of prompt caching on the
+     * current platform. Concrete commands override this to surface the
+     * [cached] / [cached-auto] badge in the model picker.
+     */
+    protected function modelSupportsCaching(string $modelId): bool
+    {
+        return false;
+    }
+
+    /**
+     * Per-model annotation shown next to a model in the picker. Default
+     * is empty; Bedrock overrides to show [cached] when the model is
+     * caching-eligible. Azure overrides to show [cached-auto] for models
+     * that auto-cache. The trailing space is intentional — the badge is
+     * always followed by ` %s` so it lines up consistently.
+     */
+    protected function cachingBadge(string $modelId): string
+    {
+        return $this->modelSupportsCaching($modelId) ? ' <fg=magenta>[cached]</>' : '';
+    }
+
+    /**
+     * Whether to ask the user whether they want cached or standard mode
+     * after model selection. Default false; Bedrock overrides to true
+     * when the package-level cachePoint config is non-empty AND the
+     * selected model supports caching.
+     */
+    protected function shouldPromptForCacheMode(string $modelId): bool
+    {
+        return false;
+    }
+
+    /**
+     * Whether the package-level cachePoint config has any anchors
+     * configured. Bedrock overrides this to read
+     * `core-ai.bedrock.prompt_caching.points`.
+     */
+    protected function packageCachingEnabled(): bool
+    {
+        return false;
+    }
+
+    /**
+     * The default value presented to the user when asked about cache mode.
+     */
+    protected function defaultCacheMode(): bool
+    {
+        return true;
+    }
+
+    /**
+     * Resolve the cachePoints override (string[] or null) for a given
+     * caching decision. Default returns null (no override). Bedrock
+     * overrides to return either the package-configured anchors or [].
+     *
+     * @return string[]|null
+     */
+    protected function cachePointsFor(bool $cachingEnabled): ?array
+    {
+        return null;
+    }
+
     protected function executeChat(): int
     {
         $connection = $this->option('connection');
@@ -64,6 +130,13 @@ abstract class AbstractChatCommand extends Command
         $temperature = (float) $this->option('temperature');
         $useStreaming = ! $this->option('no-stream');
 
+        // Cache-mode prompt runs only when the platform opts in (Bedrock).
+        // Otherwise $this->cachingEnabled stays null and the package config
+        // drives the per-call cachePoint decision.
+        if ($this->shouldPromptForCacheMode($modelId)) {
+            $this->cachingEnabled = $this->confirm('  Use cached mode for this session?', $this->defaultCacheMode());
+        }
+
         $this->printHeader($modelId, $systemPrompt, $useStreaming);
 
         $conversation = $this->manager->conversation($modelId)
@@ -74,6 +147,8 @@ abstract class AbstractChatCommand extends Command
         if ($connection) {
             $conversation->connection($connection);
         }
+
+        $this->applyCachePointsOverride($conversation);
 
         while (true) {
             $this->newLine();
@@ -132,8 +207,25 @@ abstract class AbstractChatCommand extends Command
                     $conversation->connection($connection);
                 }
 
+                $this->applyCachePointsOverride($conversation);
+
                 $modelId = $newModel;
                 $this->info("  Switched to model: {$newModel}");
+
+                continue;
+            }
+
+            if (preg_match('#^/cache(\s+(on|off))?\s*$#i', $command, $m)) {
+                $arg = strtolower($m[2] ?? '');
+                if ($arg === 'on') {
+                    $this->cachingEnabled = true;
+                } elseif ($arg === 'off') {
+                    $this->cachingEnabled = false;
+                } else {
+                    $this->cachingEnabled = ! $this->cachingEnabled;
+                }
+                $this->applyCachePointsOverride($conversation);
+                $this->info('  Caching: ' . ($this->cachingEnabled ? '<fg=green>On</>' : '<fg=yellow>Off</>'));
 
                 continue;
             }
@@ -247,8 +339,9 @@ abstract class AbstractChatCommand extends Command
             $num = $i + 1;
             $name = $model['name'] ?: $model['model_id'];
             $ctx = number_format($model['context_window']);
-            $this->line(sprintf('  <fg=yellow>%3d</> │ %s <fg=gray>(%s ctx)</>',
-                $num, $name, $ctx
+            $badge = $this->cachingBadge($model['model_id']);
+            $this->line(sprintf('  <fg=yellow>%3d</> │ %s <fg=gray>(%s ctx)</>%s',
+                $num, $name, $ctx, $badge
             ));
             $choices[$num] = $model['model_id'];
         }
@@ -380,10 +473,43 @@ abstract class AbstractChatCommand extends Command
         $this->line("  Model:     <fg=cyan>{$modelId}</>");
         $this->line('  System:    <fg=gray>'.substr($systemPrompt, 0, 60).(strlen($systemPrompt) > 60 ? '...' : '').'</>');
         $this->line('  Streaming: '.($streaming ? '<fg=green>On</>' : '<fg=yellow>Off</>'));
+        $this->line('  Caching:   '.$this->cachingHeader());
         $this->line('');
         $this->line('  Type your message and press Enter. Commands:');
         $this->line('  <fg=yellow>/help</> - Show all commands  <fg=yellow>/quit</> - Exit session');
         $this->line('  ─────────────────────────────────────────────');
+    }
+
+    /**
+     * Render the Caching: row in the chat header. Three states:
+     *   - null  → <fg=gray>Default (package config)</>
+     *   - true  → <fg=green>On</>
+     *   - false → <fg=yellow>Off</>
+     */
+    protected function cachingHeader(): string
+    {
+        return match ($this->cachingEnabled) {
+            true  => '<fg=green>On</>',
+            false => '<fg=yellow>Off</>',
+            default => '<fg=gray>Default (package config)</>',
+        };
+    }
+
+    /**
+     * Apply the current cache-mode choice to a fresh conversation builder.
+     * Called on initial model selection and after `/model` switches.
+     *
+     * @param  \Ubxty\CoreAi\Conversation\ConversationBuilder  $conversation
+     */
+    protected function applyCachePointsOverride($conversation): void
+    {
+        if ($this->cachingEnabled === null) {
+            return;
+        }
+
+        $conversation->cachePoints(
+            $this->cachingEnabled ? $this->cachePointsFor(true) : []
+        );
     }
 
     protected function printHelp(): void
@@ -398,6 +524,7 @@ abstract class AbstractChatCommand extends Command
         $this->line('  <fg=yellow>/system <text></>  Change the system prompt');
         $this->line('  <fg=yellow>/model <id></>     Switch to a different model');
         $this->line('  <fg=yellow>/temp <0-1></>     Change temperature');
+        $this->line('  <fg=yellow>/cache on|off</>  Toggle prompt caching for this session');
         $this->line('  <fg=yellow>/image <path> [prompt]</>');
         $this->line('                    Analyse an image (jpg/png/gif/webp)');
         $this->line('  <fg=yellow>/doc <path> [prompt]</>');

@@ -295,7 +295,7 @@ return [
 
         /*
         |----------------------------------------------------------------------
-        | Prompt Caching (v2.1.0)
+        | Prompt Caching (v2.1.0, hardened in v2.1.4)
         |----------------------------------------------------------------------
         |
         | AWS Bedrock supports checkpoint blocks (`cachePoint: { type: 'default' }`)
@@ -310,10 +310,29 @@ return [
         | Leave empty to disable. Not all models support caching; the Bedrock
         | runtime returns a 400 if a checkpoint is placed on an unsupported one.
         |
+        | 'supported_models' (v2.1.4) — glob patterns of model_ids that are
+        | known to honour cachePoint markers. The package skips cachePoint
+        | injection for any resolved model_id that doesn't match at least one
+        | pattern, so a curated catalogue mixing caching-capable (Nova, Claude,
+        | Cohere Command R/R+, AI21 Jamba) and non-caching models (Gemma, Llama,
+        | Mistral) keeps invoking all of them. The cross-region inference
+        | profile prefix (`us.|eu.|apac.|ca.`) is stripped before matching, so
+        | one pattern covers prefixed and unprefixed variants.
+        |
+        | Set to ['*'] to opt every model back in to caching. Set to [] to
+        | disable caching for every model regardless of `points`.
+        |
+        | Override via BEDROCK_PROMPT_CACHE_SUPPORTED_MODELS (comma-separated):
+        |   BEDROCK_PROMPT_CACHE_SUPPORTED_MODELS="anthropic.claude*,amazon.nova*"
+        |
         */
         'prompt_caching' => [
             'points' => explode(',', env('BEDROCK_PROMPT_CACHE_POINTS', '')),
             'ttl_seconds' => (int) env('BEDROCK_PROMPT_CACHE_TTL', 300), // 5 min, max 3600
+            'supported_models' => array_filter(array_map(
+                'trim',
+                explode(',', (string) env('BEDROCK_PROMPT_CACHE_SUPPORTED_MODELS', 'amazon.nova*,anthropic.claude*,cohere.command-r*,ai21.jamba*'))
+            )),
         ],
 
     ],

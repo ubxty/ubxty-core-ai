@@ -26,6 +26,16 @@ class ConversationBuilder
 
     protected ?string $connection = null;
 
+    /**
+     * Per-conversation override for cachePoint anchors (Bedrock-specific).
+     * null = honour the package's configured `prompt_caching.points`.
+     * []   = force-disable caching for this conversation.
+     * […]   = force-apply the given anchors for this conversation.
+     *
+     * @var string[]|null
+     */
+    protected ?array $cachePointsOverride = null;
+
     protected ?array $schema = null;
 
     /** @var array<string, mixed> */
@@ -275,6 +285,28 @@ class ConversationBuilder
     }
 
     /**
+     * Override the cachePoint strategy for this conversation only.
+     *
+     * Provider-specific (currently only Bedrock). Pass:
+     *   - `null` (default) — use the package's `prompt_caching.points` config.
+     *   - `[]`              — disable caching for this conversation, even when
+     *                          the package config has anchors configured.
+     *   - `['system', …]`   — force caching with the given anchors, even when
+     *                          the package config is empty.
+     *
+     * Used by `bedrock:chat` and `azure:chat` to honour a per-session
+     * "cached vs standard" choice without touching the project .env.
+     */
+    public function cachePoints(?array $points): static
+    {
+        $this->cachePointsOverride = $points === null
+            ? null
+            : array_values(array_filter(array_map('strval', $points), static fn (string $p) => $p !== ''));
+
+        return $this;
+    }
+
+    /**
      * Override the model ID mid-build.
      */
     public function model(string $modelId): static
@@ -351,6 +383,7 @@ class ConversationBuilder
             $this->temperature,
             $this->connection,
             $this->pricing,
+            $this->cachePointsOverride,
         );
 
         $this->messages[] = ['role' => 'assistant', 'content' => $result['response']];
@@ -376,6 +409,7 @@ class ConversationBuilder
             $this->temperature,
             $this->connection,
             $this->pricing,
+            $this->cachePointsOverride,
         );
 
         $this->messages[] = ['role' => 'assistant', 'content' => $result['response']];
