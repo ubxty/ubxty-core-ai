@@ -19,6 +19,10 @@ abstract class AbstractChatCommand extends Command
 
     protected int $totalOutputTokens = 0;
 
+    protected int $totalCacheReadTokens = 0;
+
+    protected int $totalCacheWriteTokens = 0;
+
     protected float $totalCost = 0;
 
     protected int $messageCount = 0;
@@ -180,6 +184,8 @@ abstract class AbstractChatCommand extends Command
                 $conversation->reset();
                 $this->totalInputTokens = 0;
                 $this->totalOutputTokens = 0;
+                $this->totalCacheReadTokens = 0;
+                $this->totalCacheWriteTokens = 0;
                 $this->totalCost = 0;
                 $this->messageCount = 0;
                 $this->info('  Conversation reset.');
@@ -277,15 +283,12 @@ abstract class AbstractChatCommand extends Command
                 $this->messageCount++;
                 $this->totalInputTokens += $result['input_tokens'] ?? 0;
                 $this->totalOutputTokens += $result['output_tokens'] ?? 0;
+                $this->totalCacheReadTokens += $result['cache_read_input_tokens'] ?? 0;
+                $this->totalCacheWriteTokens += $result['cache_write_input_tokens'] ?? 0;
                 $this->totalCost += $result['cost'] ?? 0;
 
                 $this->newLine();
-                $this->line(sprintf(
-                    '  <fg=gray>[%d in / %d out / %dms]</>',
-                    $result['input_tokens'] ?? 0,
-                    $result['output_tokens'] ?? 0,
-                    $result['latency_ms'] ?? 0,
-                ));
+                $this->line('  '.$this->formatStatusLine($result));
             } catch (\Exception $e) {
                 $messages = $conversation->getMessages();
                 array_pop($messages);
@@ -429,15 +432,12 @@ abstract class AbstractChatCommand extends Command
             $this->messageCount++;
             $this->totalInputTokens += $result['input_tokens'] ?? 0;
             $this->totalOutputTokens += $result['output_tokens'] ?? 0;
+            $this->totalCacheReadTokens += $result['cache_read_input_tokens'] ?? 0;
+            $this->totalCacheWriteTokens += $result['cache_write_input_tokens'] ?? 0;
             $this->totalCost += $result['cost'] ?? 0;
 
             $this->newLine();
-            $this->line(sprintf(
-                '  <fg=gray>[%d in / %d out / %dms]</>',
-                $result['input_tokens'] ?? 0,
-                $result['output_tokens'] ?? 0,
-                $result['latency_ms'] ?? 0,
-            ));
+            $this->line('  '.$this->formatStatusLine($result));
         } catch (\Exception $e) {
             $messages = $conversation->getMessages();
             array_pop($messages);
@@ -540,8 +540,46 @@ abstract class AbstractChatCommand extends Command
         $this->line('  Output Tokens: '.number_format($this->totalOutputTokens));
         $this->line('  Total Tokens:  '.number_format($this->totalInputTokens + $this->totalOutputTokens));
 
+        if ($this->totalCacheReadTokens > 0 || $this->totalCacheWriteTokens > 0) {
+            $this->line('  Cache Read:    '.number_format($this->totalCacheReadTokens).' tokens');
+            $this->line('  Cache Write:   '.number_format($this->totalCacheWriteTokens).' tokens');
+        }
+
         if ($this->totalCost > 0) {
             $this->line('  Estimated Cost: $'.number_format($this->totalCost, 6));
         }
+    }
+
+    /**
+     * Build the per-turn status line. Always shows tokens in / out / latency;
+     * appends cache-token detail when the platform reported any, so the
+     * common case stays as compact as it always was.
+     *
+     * Example with caching active:
+     *   [24 in / 45 out / 18772ms · cache: 0 read, 24 write]
+     *
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatStatusLine(array $result): string
+    {
+        $input = (int) ($result['input_tokens'] ?? 0);
+        $output = (int) ($result['output_tokens'] ?? 0);
+        $latency = (int) ($result['latency_ms'] ?? 0);
+        $cacheRead = (int) ($result['cache_read_input_tokens'] ?? 0);
+        $cacheWrite = (int) ($result['cache_write_input_tokens'] ?? 0);
+
+        $line = sprintf(
+            '<fg=gray>[%d in / %d out / %dms]</>',
+            $input, $output, $latency
+        );
+
+        if ($cacheRead > 0 || $cacheWrite > 0) {
+            $line .= sprintf(
+                ' <fg=magenta>· cache: %d read, %d write</>',
+                $cacheRead, $cacheWrite
+            );
+        }
+
+        return $line;
     }
 }
