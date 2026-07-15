@@ -3,6 +3,7 @@
 namespace Ubxty\CoreAi\Commands;
 
 use Illuminate\Console\Command;
+use Ubxty\CoreAi\Commands\Concerns\PasteSpooler;
 use Ubxty\CoreAi\Contracts\AiManagerContract;
 
 /**
@@ -13,6 +14,8 @@ use Ubxty\CoreAi\Contracts\AiManagerContract;
  */
 abstract class AbstractChatCommand extends Command
 {
+    use PasteSpooler;
+
     protected AiManagerContract $manager;
 
     protected int $totalInputTokens = 0;
@@ -188,7 +191,8 @@ abstract class AbstractChatCommand extends Command
                 $this->totalCacheWriteTokens = 0;
                 $this->totalCost = 0;
                 $this->messageCount = 0;
-                $this->info('  Conversation reset.');
+                $removed = $this->cleanupSpooledPastes();
+                $this->info('  Conversation reset.'.($removed > 0 ? " ({$removed} paste file(s) removed.)" : ''));
 
                 continue;
             }
@@ -268,7 +272,23 @@ abstract class AbstractChatCommand extends Command
                 continue;
             }
 
-            $conversation->user($input);
+            $messageToModel = $input;
+            $spooledInfo = null;
+
+            if ($this->shouldSpoolPaste($input)) {
+                $spooledInfo = $this->spoolPaste($input);
+                $messageToModel = $spooledInfo['reference'];
+
+                $this->newLine();
+                $this->line(sprintf(
+                    '  <fg=gray>You: (pasted %s, %d lines → <fg=cyan>%s</>)</>',
+                    $this->formatBytes($spooledInfo['bytes']),
+                    $spooledInfo['lines'],
+                    $spooledInfo['path']
+                ));
+            }
+
+            $conversation->user($messageToModel);
 
             try {
                 $this->line('');
@@ -525,6 +545,9 @@ abstract class AbstractChatCommand extends Command
         $this->line('  <fg=yellow>/model <id></>     Switch to a different model');
         $this->line('  <fg=yellow>/temp <0-1></>     Change temperature');
         $this->line('  <fg=yellow>/cache on|off</>  Toggle prompt caching for this session');
+        $this->line('');
+        $this->line('  <fg=gray>Pastes over 2 KB or 50 lines are auto-spooled to /tmp and the</>');
+        $this->line('  <fg=gray>model sees a path reference. /reset cleans them up.</>');
         $this->line('  <fg=yellow>/image <path> [prompt]</>');
         $this->line('                    Analyse an image (jpg/png/gif/webp)');
         $this->line('  <fg=yellow>/doc <path> [prompt]</>');
