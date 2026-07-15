@@ -25,6 +25,9 @@ class ConversationBuilder
 
     protected ?array $schema = null;
 
+    /** @var array<string, mixed> */
+    protected array $toolConfig = [];
+
     protected AiManagerContract $manager;
 
     public function __construct(AiManagerContract $manager, string $modelId)
@@ -420,6 +423,49 @@ class ConversationBuilder
     public function getSchema(): ?array
     {
         return $this->schema;
+    }
+
+    /**
+     * Register tools the model may call during the conversation.
+     *
+     * The platform-specific builder (e.g. Bedrock) reads `tools` and
+     * `toolChoice` via {@see getToolConfig()} when assembling the request.
+     * Untouched when not called — downstream platforms simply skip tool
+     * plumbing.
+     *
+     * @param  array<int, array<string, mixed>>  $tools
+     */
+    public function tools(array $tools): static
+    {
+        $this->toolConfig['tools'] = array_values($tools);
+
+        return $this;
+    }
+
+    /**
+     * Hint the model how to pick from the registered tools.
+     *
+     * Common values: "auto", "any", "none", or `{"name": "tool_name"}`
+     * (platform-dependent — passed through verbatim).
+     */
+    public function toolChoice(string $choice): static
+    {
+        $this->toolConfig['toolChoice'] = $choice;
+
+        return $this;
+    }
+
+    /**
+     * Get the tool config assembled by {@see tools()} and {@see toolChoice()}.
+     *
+     * Shape: `{ tools?: array, toolChoice?: string }`. Empty when neither
+     * setter was called.
+     *
+     * @return array<string, mixed>
+     */
+    public function getToolConfig(): array
+    {
+        return $this->toolConfig;
     }
 
     /**
