@@ -5,6 +5,7 @@ namespace Ubxty\CoreAi\Conversation;
 use Ubxty\CoreAi\Contracts\AiManagerContract;
 use Ubxty\CoreAi\Contracts\ConversationCompactor;
 use Ubxty\CoreAi\Exceptions\AiException;
+use Ubxty\CoreAi\Support\CompactedConversation;
 use Ubxty\CoreAi\Support\CompactionContext;
 use Ubxty\CoreAi\Support\TokenEstimator;
 
@@ -340,12 +341,12 @@ class ConversationBuilder
      */
     public function send(): array
     {
-        $messages = $this->compactMessages();
+        $compacted = $this->compactMessages();
 
         $result = $this->manager->converse(
             $this->modelId,
-            $messages,
-            $this->effectiveSystemPrompt(),
+            $compacted->recent,
+            $this->effectiveSystemPromptWithAnchor($compacted->anchor),
             $this->maxTokens,
             $this->temperature,
             $this->connection,
@@ -364,13 +365,13 @@ class ConversationBuilder
      */
     public function sendStream(callable $onChunk): array
     {
-        $messages = $this->compactMessages();
+        $compacted = $this->compactMessages();
 
         $result = $this->manager->converseStream(
             $this->modelId,
-            $messages,
+            $compacted->recent,
             $onChunk,
-            $this->effectiveSystemPrompt(),
+            $this->effectiveSystemPromptWithAnchor($compacted->anchor),
             $this->maxTokens,
             $this->temperature,
             $this->connection,
@@ -550,21 +551,47 @@ class ConversationBuilder
     }
 
     /**
-     * Run the registered compactor (if any) over the message history.
-     *
-     * Returns the original array verbatim when no compactor is registered so
-     * downstream SDK calls see the same shape they would have without the
-     * T2-PR2 contract.
-     *
-     * @return array<int, array{role: string, content: string|array}>
+     * Like {@see effectiveSystemPrompt()}, but if a compactor-produced
+     * `$anchor` is present, prepend it as a system-prompt addendum so
+     * the model sees the summary of older turns before the recent
+     * slice. Returns the prompt unchanged when `$anchor === ''`
+     * (the sliding-window or no-compactor path).
      */
-    protected function compactMessages(): array
+    protected function effectiveSystemPromptWithAnchor(string $anchor): string
     {
-        if ($this->compactor === null) {
-            return $this->messages;
+        $base = $this->effectiveSystemPrompt();
+
+        if ($anchor === '') {
+            return $base;
         }
 
-        return $this->compactor->compact($this->messages, new CompactionContext())->recent;
+        return rtrim($base)."\n\n".
+            '--- PREVIOUS CONVERSATION SUMMARY (older turns) ---'."\n".
+            $anchor."\n".
+            '--- END SUMMARY ---';
+    }
+
+    /**
+     * Run the registered compactor (if any) over the message history.
+     *
+     * Returns a {@see CompactedConversation} (which the caller is expected
+     * to use BOTH for the `recent` slice sent to the model AND for the
+     * `anchor` text prepended to the system prompt). When no compactor
+     * is registered, returns a no-op CompactedConversation wrapping the
+     * full original history — so call sites can use the same code path
+     * regardless of whether a compactor is set.
+     */
+    protected function compactMessages(): CompactedConversation
+    {
+        if ($this->compactor === null) {
+            return new CompactedConversation(
+                anchor: '',
+                recent: $this->messages,
+                strategy: 'none',
+            );
+        }
+
+        return $this->compactor->compact($this->messages, new CompactionContext());
     }
 
     /**
