@@ -494,6 +494,7 @@ abstract class AbstractChatCommand extends Command
         $this->line('  System:    <fg=gray>'.substr($systemPrompt, 0, 60).(strlen($systemPrompt) > 60 ? '...' : '').'</>');
         $this->line('  Streaming: '.($streaming ? '<fg=green>On</>' : '<fg=yellow>Off</>'));
         $this->line('  Caching:   '.$this->cachingHeader());
+        $this->line('  Smart Paste: '.$this->smartPasteHeader());
         $this->line('');
         $this->line('  Type your message and press Enter. Commands:');
         $this->line('  <fg=yellow>/help</> - Show all commands  <fg=yellow>/quit</> - Exit session');
@@ -513,6 +514,21 @@ abstract class AbstractChatCommand extends Command
             false => '<fg=yellow>Off</>',
             default => '<fg=gray>Default (package config)</>',
         };
+    }
+
+    /**
+     * Render the Smart Paste: row. Shows the current thresholds so the
+     * user knows when their paste will get redirected to /tmp. Always on
+     * by default — there is no off-switch because the fallback (echoing
+     * the raw paste) is what we're trying to avoid.
+     */
+    protected function smartPasteHeader(): string
+    {
+        return sprintf(
+            '<fg=green>On</> <fg=gray>(> %s / > %d lines → /tmp)</>',
+            $this->formatBytes($this->pasteSpoolByteThreshold),
+            $this->pasteSpoolLineThreshold
+        );
     }
 
     /**
