@@ -21,8 +21,7 @@ interface AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?array $pricing = null,
-        ?string $connection = null,
-        ?CacheKeyContext $ctx = null
+        ?string $connection = null
     ): array;
 
     /**
@@ -38,8 +37,7 @@ interface AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?string $connection = null,
-        ?array $pricing = null,
-        ?CacheKeyContext $ctx = null
+        ?array $pricing = null
     ): array;
 
     /**
@@ -49,6 +47,72 @@ interface AiManagerContract
      * @param  callable(string $chunk): void  $onChunk
      */
     public function converseStream(
+        string $modelId,
+        array $messages,
+        callable $onChunk,
+        string $systemPrompt = '',
+        int $maxTokens = 4096,
+        float $temperature = 0.7,
+        ?string $connection = null,
+        ?array $pricing = null
+    ): array;
+
+    /**
+     * Invoke a model with a single prompt, scoped by a cache-key context.
+     *
+     * The `$ctx` controls how the response cache is namespaced: the cache
+     * key is split by `tenant` / `conversation` / `promptVersion` segments
+     * so distinct conversations on the same tenant get distinct entries.
+     * Use this overload from app code that already has a tenant + conversation
+     * handle (e.g. the chat flow in RubriSense).
+     *
+     * Purely additive to the contract — implementations must also keep
+     * `invoke()` working. `invoke($a, $b, …)` is equivalent to
+     * `invokeWithContext($a, $b, …, null)`.
+     *
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cost: float, latency_ms: int, status: string, key_used: string, model_id: string}
+     */
+    public function invokeWithContext(
+        string $modelId = '',
+        string $systemPrompt = '',
+        string $userMessage = '',
+        int $maxTokens = 4096,
+        float $temperature = 0.7,
+        ?array $pricing = null,
+        ?string $connection = null,
+        ?CacheKeyContext $ctx = null
+    ): array;
+
+    /**
+     * Send a multi-turn conversation, scoped by a cache-key context.
+     *
+     * Purely additive. `converse($a, …, $pricing)` is equivalent to
+     * `converseWithContext($a, …, $pricing, null)`.
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, stop_reason: string, latency_ms: int, model_id: string, key_used: string, cost: float}
+     */
+    public function converseWithContext(
+        string $modelId,
+        array $messages,
+        string $systemPrompt = '',
+        int $maxTokens = 4096,
+        float $temperature = 0.7,
+        ?string $connection = null,
+        ?array $pricing = null,
+        ?CacheKeyContext $ctx = null
+    ): array;
+
+    /**
+     * Stream a multi-turn conversation, scoped by a cache-key context.
+     *
+     * Purely additive. `converseStream($a, …, $pricing)` is equivalent to
+     * `converseStreamWithContext($a, …, $pricing, null)`.
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     * @param  callable(string $chunk): void  $onChunk
+     */
+    public function converseStreamWithContext(
         string $modelId,
         array $messages,
         callable $onChunk,

@@ -40,6 +40,60 @@ abstract class AbstractAiManager implements AiManagerContract
         int $maxTokens = 4096,
         float $temperature = 0.7,
         ?array $pricing = null,
+        ?string $connection = null
+    ): array {
+        return $this->invokeWithContext(
+            $modelId, $systemPrompt, $userMessage, $maxTokens, $temperature,
+            $pricing, $connection, null
+        );
+    }
+
+    public function converse(
+        string $modelId,
+        array $messages,
+        string $systemPrompt = '',
+        int $maxTokens = 4096,
+        float $temperature = 0.7,
+        ?string $connection = null,
+        ?array $pricing = null
+    ): array {
+        return $this->converseWithContext(
+            $modelId, $messages, $systemPrompt, $maxTokens, $temperature,
+            $connection, $pricing, null
+        );
+    }
+
+    public function converseStream(
+        string $modelId,
+        array $messages,
+        callable $onChunk,
+        string $systemPrompt = '',
+        int $maxTokens = 4096,
+        float $temperature = 0.7,
+        ?string $connection = null,
+        ?array $pricing = null
+    ): array {
+        return $this->converseStreamWithContext(
+            $modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature,
+            $connection, $pricing, null
+        );
+    }
+
+    /**
+     * A5 — Cache-namespace-aware invoke overload. This is the real
+     * implementation; the no-context `invoke()` is a thin wrapper that
+     * calls this with `$ctx = null`. New code should prefer this method
+     * when it has a tenant + conversation handle.
+     *
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cost: float, latency_ms: int, status: string, key_used: string, model_id: string}
+     */
+    public function invokeWithContext(
+        string $modelId = '',
+        string $systemPrompt = '',
+        string $userMessage = '',
+        int $maxTokens = 4096,
+        float $temperature = 0.7,
+        ?array $pricing = null,
         ?string $connection = null,
         ?CacheKeyContext $ctx = null
     ): array {
@@ -92,7 +146,13 @@ abstract class AbstractAiManager implements AiManagerContract
         return $result;
     }
 
-    public function converse(
+    /**
+     * A5 — Cache-namespace-aware converse overload.
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, stop_reason: string, latency_ms: int, model_id: string, key_used: string, cost: float}
+     */
+    public function converseWithContext(
         string $modelId,
         array $messages,
         string $systemPrompt = '',
@@ -142,7 +202,13 @@ abstract class AbstractAiManager implements AiManagerContract
         return $result;
     }
 
-    public function converseStream(
+    /**
+     * A5 — Cache-namespace-aware streaming converse overload.
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     * @param  callable(string $chunk): void  $onChunk
+     */
+    public function converseStreamWithContext(
         string $modelId,
         array $messages,
         callable $onChunk,
@@ -166,8 +232,8 @@ abstract class AbstractAiManager implements AiManagerContract
             $cacheKey = $this->responseCacheKeyConverse($modelId, $systemPrompt, $messages, $maxTokens, $temperature, $ctx);
             $cached = Cache::get($cacheKey);
 
-            if (is_array($cached) && isset($cached['text'])) {
-                $text = (string) $cached['text'];
+            if (is_array($cached) && isset($cached['response'])) {
+                $text = (string) $cached['response'];
                 for ($i = 0, $n = strlen($text); $i < $n; $i += 80) {
                     $onChunk(substr($text, $i, 80), false);
                 }
