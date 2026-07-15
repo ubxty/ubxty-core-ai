@@ -462,22 +462,22 @@ abstract class AbstractAiManager implements AiManagerContract
     protected function checkCostLimits(): void
     {
         $prefix = $this->cachePrefix();
-        $dailyLimit = $this->config['limits']['daily'] ?? null;
-        $monthlyLimit = $this->config['limits']['monthly'] ?? null;
+        $dailyLimit = $this->normalizeLimit($this->config['limits']['daily'] ?? null);
+        $monthlyLimit = $this->normalizeLimit($this->config['limits']['monthly'] ?? null);
 
         if ($dailyLimit !== null) {
             $dailyCost = (float) Cache::get("{$prefix}_daily_cost_".date('Y-m-d'), 0);
 
-            if ($dailyCost >= (float) $dailyLimit) {
-                throw new CostLimitExceededException('daily', (float) $dailyLimit, $dailyCost);
+            if ($dailyCost >= $dailyLimit) {
+                throw new CostLimitExceededException('daily', $dailyLimit, $dailyCost);
             }
         }
 
         if ($monthlyLimit !== null) {
             $monthlyCost = (float) Cache::get("{$prefix}_monthly_cost_".date('Y-m'), 0);
 
-            if ($monthlyCost >= (float) $monthlyLimit) {
-                throw new CostLimitExceededException('monthly', (float) $monthlyLimit, $monthlyCost);
+            if ($monthlyCost >= $monthlyLimit) {
+                throw new CostLimitExceededException('monthly', $monthlyLimit, $monthlyCost);
             }
         }
 
@@ -500,6 +500,22 @@ abstract class AbstractAiManager implements AiManagerContract
                 }
             }
         }
+    }
+
+    /**
+     * Coerce a configured spend cap to a float, or null when no cap is set.
+     *
+     * env('LIMIT', null) returns '' (not null) when .env has LIMIT= with no
+     * value, so we have to treat empty strings as "unset" ourselves. Also
+     * accepts null and false; everything else is cast to float.
+     */
+    private function normalizeLimit(mixed $value): ?float
+    {
+        if ($value === null || $value === '' || $value === false) {
+            return null;
+        }
+
+        return (float) $value;
     }
 
     protected function trackCost(float $cost): void
