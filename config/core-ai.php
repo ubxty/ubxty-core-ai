@@ -244,15 +244,24 @@ return [
         | ListFoundationModels API (cached via Laravel cache for
         | cache.models_ttl).
         |
-        | Override via BEDROCK_MODELS env (JSON):
-        |   BEDROCK_MODELS='{"anthropic.claude-3-5-sonnet-20241022-v2:0":{"provider":"Anthropic",…}}'
+        | Override via BEDROCK_MODELS env (comma-separated model IDs):
+        |   BEDROCK_MODELS=anthropic.claude-3-5-sonnet-20241022-v2:0,amazon.nova-lite-v1:0
+        |
+        | Each ID is wrapped into ['name' => id] so getModelsGrouped() can
+        | surface it without hitting the AWS API. Add provider / capabilities
+        | etc. via config/core-ai.php overrides or by populating the catalogue
+        | in code; display labels stay customisable from the consuming app.
         |
         */
         'models' => array_filter([
-            'default' => array_filter(array_map(
-                fn ($m) => is_array($m) ? $m : null,
-                json_decode((string) env('BEDROCK_MODELS', '[]'), true) ?: [],
-            )),
+            'default' => (function () {
+                $ids = array_filter(array_map('trim', explode(',', (string) env('BEDROCK_MODELS', ''))));
+
+                return array_filter(array_combine(
+                    $ids,
+                    array_map(fn (string $id) => ['name' => $id], $ids),
+                ));
+            })(),
         ]),
 
         /*
@@ -456,15 +465,24 @@ return [
         | cache.models_ttl). Microsoft Foundry endpoints that don't expose
         | /models return [] gracefully.
         |
-        | Override via AZURE_OPENAI_MODELS env (JSON):
-        |   AZURE_OPENAI_MODELS='{"my-gpt-4o-deployment":{"provider":"OpenAI",…}}'
+        | Override via AZURE_OPENAI_MODELS env (comma-separated deployment IDs):
+        |   AZURE_OPENAI_MODELS=my-gpt-4o-deployment,my-gpt-4o-mini-deployment
+        |
+        | Each ID is wrapped into ['name' => id] so getModelsGrouped() can
+        | surface it without hitting the Azure API. Add provider / capabilities
+        | etc. via config/core-ai.php overrides or by populating the catalogue
+        | in code; display labels stay customisable from the consuming app.
         |
         */
         'models' => array_filter([
-            'default' => array_filter(array_map(
-                fn ($m) => is_array($m) ? $m : null,
-                json_decode((string) env('AZURE_OPENAI_MODELS', '[]'), true) ?: [],
-            )),
+            'default' => (function () {
+                $ids = array_filter(array_map('trim', explode(',', (string) env('AZURE_OPENAI_MODELS', ''))));
+
+                return array_filter(array_combine(
+                    $ids,
+                    array_map(fn (string $id) => ['name' => $id], $ids),
+                ));
+            })(),
         ]),
 
         /*
