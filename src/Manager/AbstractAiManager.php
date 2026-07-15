@@ -157,6 +157,41 @@ abstract class AbstractAiManager implements AiManagerContract
 
         $modelId = $this->resolveAlias($modelId);
 
+        // Response-cache: same content + same key params returns a cached result
+        // when cache.response_ttl > 0. We still emit synthetic delta chunks to the
+        // caller so any downstream UI that streams works identically.
+        $responseTtl = (int) ($this->config['cache']['response_ttl'] ?? 0);
+        $cacheKey = null;
+        if ($responseTtl > 0) {
+            $cacheKey = $this->responseCacheKeyConverse($modelId, $systemPrompt, $messages, $maxTokens, $temperature, $ctx);
+            $cached = Cache::get($cacheKey);
+
+            if (is_array($cached) && isset($cached['text'])) {
+                $text = (string) $cached['text'];
+                for ($i = 0, $n = strlen($text); $i < $n; $i += 80) {
+                    $onChunk(substr($text, $i, 80), false);
+                }
+                $onChunk('', true);
+
+                $cached['cached'] = true;
+                $cached['latency_ms'] = 0;
+                $this->fireInvokedEvent($cached);
+
+                return $cached;
+            }
+        }
+
+        // Pre-flight token ceiling: catch runaway multimodal payloads before
+        // they reach the SDK. The 10x multiplier on maxTokens is the safe headroom
+        // for input+output combined; we only trip when callers stack huge
+        // attachments on a tiny max_tokens budget.
+        $est = TokenEstimator::estimateMultimodal($messages, $systemPrompt);
+        if ($est > $maxTokens * 10) {
+            throw new \Ubxty\CoreAi\Exceptions\TokenLimitExceededException(
+                'converseStream: estimated '.$est.' tokens exceeds safe ceiling'
+            );
+        }
+
         $result = $this->performConverseStream($modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature, $connection);
 
         $cost = $this->calculateCost($result['input_tokens'] ?? 0, $result['output_tokens'] ?? 0, $pricing);
@@ -165,6 +200,11 @@ abstract class AbstractAiManager implements AiManagerContract
         $this->trackCost($cost);
         $this->fireInvokedEvent($result);
         $this->getLogger()->log($result);
+
+        if ($responseTtl > 0) {
+            $cacheKey ??= $this->responseCacheKeyConverse($modelId, $systemPrompt, $messages, $maxTokens, $temperature, $ctx);
+            Cache::put($cacheKey, $result, $responseTtl);
+        }
 
         return $result;
     }
