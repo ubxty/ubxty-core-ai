@@ -24,7 +24,7 @@ You should see `ubxty/core-ai` listed under "Service Providers" or "Packages". I
 php artisan vendor:publish --tag=core-ai-config
 ```
 
-This writes `config/core-ai.php` into your app. The defaults are usable out of the box, so publishing is only needed if you want to customise `cache.response_ttl`, `logging.enabled`, or add provider blocks.
+This writes `config/core-ai.php` into your app. The defaults are usable out of the box, so publishing is only needed if you want to customise `bedrock.cache.response_ttl`, `bedrock.logging.enabled` (and the `azure_ai.*` mirrors), or add provider blocks.
 
 > **Don't auto-publish in CI.** The tag is only available when `$this->app->runningInConsole()` is true, which is fine for a development deployment — but if you run `vendor:publish --all` in CI, you'll overwrite your team's config. Pin only what you need via `config([...])` in a service provider.
 

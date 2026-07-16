@@ -46,9 +46,9 @@ A: `clampMaxTokens()` resolves the model's `max_tokens` ceiling via `ModelSpecRe
 
 ## Caching
 
-**Q: When should I enable `cache.response_ttl`?**
+**Q: When should I enable `<provider>.cache.response_ttl`?**
 
-A: When your prompts are deterministic for given inputs and you re-issue the same call frequently. NOT for live chat or any prompt that varies by user input or conversation history. The cache key is `sha256(model|system|user|max|temp)` for `invoke()` and `sha256(model|system|json_messages|max|temp)` for `converse()`.
+A: When your prompts are deterministic for given inputs and you re-issue the same call frequently. NOT for live chat or any prompt that varies by user input or conversation history. The cache key is `sha256(model|system|user|max|temp)` for `invoke()` and `sha256(model|system|json_messages|max|temp)` for `converse()`. Set `bedrock.cache.response_ttl` for AWS Bedrock and `azure_ai.cache.response_ttl` for Azure OpenAI.
 
 **Q: How do I know if my call was a cache hit?**
 
@@ -72,7 +72,7 @@ A: Yes — caches use the default Laravel cache store. Set `CACHE_STORE=redis` f
 
 **Q: Why does my embedding call re-hits the wire for the same text?**
 
-A: Check `cache.embedding_ttl` — `0` disables. The default is 7 days. The cache key is `sha256(modelId|dimensions|text)`, so any change in those resets the cache.
+A: Check `<provider>.cache.embedding_ttl` (`bedrock.cache.embedding_ttl` or `azure_ai.cache.embedding_ttl`) — `0` disables. The default is 7 days. The cache key is `sha256(modelId|dimensions|text)`, so any change in those resets the cache.
 
 ---
 

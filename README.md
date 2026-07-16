@@ -77,7 +77,7 @@ Writing an AI provider package sounds simple — call the SDK, get a string back
 |---|---|
 | Two API keys for two regions. One throttles, the other works. | `AbstractCredentialManager` + `HasRetryLogic` rotate keys automatically, retry on the same key on `429`, and `AiKeyRotated` lets you watch what happened. |
 | "We lost $200 in one retry loop because the network blipped between send and ack." | `idempotencyKey()` produces a deterministic content hash. Provider packages inject it as an `Idempotency-Key` HTTP header so retries return the same cached result instead of double-billing. |
-| "Why is every request slow even when the prompt is identical?" | Response-cache layer on `invoke()` + `converse()`. Set `cache.response_ttl` and the SHA256-hashed pair returns instantly. |
+| "Why is every request slow even when the prompt is identical?" | Response-cache layer on `invoke()` + `converse()`. Set `<provider>.cache.response_ttl` (under `bedrock` or `azure_ai`) and the SHA256-hashed pair returns instantly. |
 | "A caller asked for 16k tokens from a 4k-cap model. We got a 400." | `clampMaxTokens()` silently downscales to the model's ceiling and fits-check against remaining context. No more upstream 400s on mis-sized requests. |
 | "The Claude 3.5 Sonnet v2 spec changed again." | `ModelSpecResolver` is a static catalogue keyed on model ID. Bump it once. |
 | "Why are our token estimates off by 3×?" | `TokenEstimator` uses 4 chars/token, image flat-budget (1,600 tokens), and base64-bytes-per-token for documents. Multimodal messages are supported. |
@@ -219,14 +219,21 @@ $result = $manager->invoke(
 );
 ```
 
-### 2. Response cache (`cache.response_ttl`)
+### 2. Response cache (`<provider>.cache.response_ttl`)
 
-When `core-ai.cache.response_ttl > 0`, identical `(modelId, systemPrompt, userMessage, maxTokens, temperature)` calls return the previous result without hitting the provider. Multi-turn `converse()` hashes the canonical `messages` JSON array.
+When `core-ai.bedrock.cache.response_ttl > 0` (or the equivalent `core-ai.azure_ai.cache.response_ttl`), identical `(modelId, systemPrompt, userMessage, maxTokens, temperature)` calls return the previous result without hitting the provider. Multi-turn `converse()` hashes the canonical `messages` JSON array. Each provider has its own key — there is no shared root-level fallback.
 
 ```php
 // config/core-ai.php
-'cache' => [
-    'response_ttl' => 3600, // memoise for 1 hour
+'bedrock' => [
+    'cache' => [
+        'response_ttl' => 3600, // memoise Bedrock responses for 1 hour
+    ],
+],
+'azure_ai' => [
+    'cache' => [
+        'response_ttl' => 3600, // memoise Azure responses for 1 hour
+    ],
 ],
 ```
 
@@ -254,9 +261,9 @@ $key = $manager->idempotencyKey($modelId, $systemPrompt.$userMessage);
 // "aws_bedrock_ai-<sha256 hash>"
 ```
 
-### 4. Embedding cache (`cache.embedding_ttl`)
+### 4. Embedding cache (`<provider>.cache.embedding_ttl`)
 
-`cache.embedding_ttl` (default **604800** = 7 days) is consumed by `BedrockManager::embed()` and `AzureManager::embed()` to memoise per-text embeddings. Embeddings are deterministic for a fixed model ID + dimensions, so caching eliminates redundant ingestion.
+`core-ai.bedrock.cache.embedding_ttl` and `core-ai.azure_ai.cache.embedding_ttl` (each default **604800** = 7 days) are consumed by `BedrockManager::embed()` and `AzureManager::embed()` to memoise per-text embeddings. Embeddings are deterministic for a fixed model ID + dimensions, so caching eliminates redundant ingestion. Each provider has its own key — there is no shared root-level fallback.
 
 ### 5. Cost-limit enforcement
 
@@ -473,12 +480,20 @@ Aliases are seeded from `core-ai.{bedrock,azure_ai}.aliases` config. The manager
 | `logRateLimit(string $modelId, string $keyLabel, int $attempt, int $waitSeconds)` | warning `AI rate limited` | model + key + attempt + wait |
 | `isEnabled(): bool` / `getChannel(): string` | — | accessors |
 
-Configure via `core-ai.logging`:
+Configure via the per-provider block — `core-ai.bedrock.logging` or `core-ai.azure_ai.logging`. The top-level `core-ai.logging` is **not** read by the manager code:
 
 ```php
-'logging' => [
-    'enabled' => true,
-    'channel' => 'stack', // or 'ai', 'daily', …
+'bedrock' => [
+    'logging' => [
+        'enabled' => true,
+        'channel' => 'stack', // or 'ai', 'daily', …
+    ],
+],
+'azure_ai' => [
+    'logging' => [
+        'enabled' => true,
+        'channel' => 'stack',
+    ],
 ],
 ```
 
@@ -577,10 +592,11 @@ The full `config/core-ai.php` ships with these top-level keys. **Provider packag
 | `cache.models_ttl` | `3600` | How long `listModels()` results stay cached. |
 | `cache.usage_ttl` | `900` | `UsageTracker::calculateCosts()` cache window. |
 | `cache.pricing_ttl` | `86400` | `PricingService::getPricing()` cache window. |
-| `cache.response_ttl` | `0` | v2.1.0 — memoise `invoke`/`converse` responses. `0` disables. |
-| `cache.embedding_ttl` | `604800` | v2.1.0 — 7 days. Embeddings are deterministic and expensive. |
-| `logging.enabled` | `false` | Enable the invocation logger. |
-| `logging.channel` | `stack` | Any configured Laravel log channel. |
+| `bedrock.cache.response_ttl` / `azure_ai.cache.response_ttl` | `0` | v2.1.0 — memoise `invoke`/`converse` responses. `0` disables. Per-provider. |
+| `bedrock.cache.embedding_ttl` / `azure_ai.cache.embedding_ttl` | `604800` | v2.1.0 — 7 days. Embeddings are deterministic and expensive. Per-provider. |
+| `bedrock.cache.billing_ttl` | `3600` | Bedrock only — Cost Explorer billing cache window. |
+| `bedrock.logging.enabled` / `azure_ai.logging.enabled` | `false` | Enable the invocation logger. Per-provider. |
+| `bedrock.logging.channel` / `azure_ai.logging.channel` | `stack` | Any configured Laravel log channel. Per-provider. |
 
 Both provider blocks (`core-ai.bedrock.*`, `core-ai.azure_ai.*`) include `default`, `connections` (with nested `keys`), `retry`, `limits`, `cache`, `providers.disabled_providers`, `providers.chat.disabled_providers`, `providers.image.disabled_providers`, `defaults`, `aliases`, `models`, `logging`, and `health_check`. Bedrock additionally includes `pricing`, `usage`, and `prompt_caching`; those keys are not part of the Azure block. See each provider's README for the full reference.
 

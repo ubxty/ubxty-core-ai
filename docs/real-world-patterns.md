@@ -30,7 +30,7 @@ class TenantAiDispatcher
                 'retry' => ['max_retries' => 3, 'base_delay' => 2],
                 'cache' => [
                     'models_ttl' => 600,
-                    'response_ttl' => 0, // per-request cache key
+                    'response_ttl' => 0, // per-request cache key (Bedrock-scoped)
                 ],
                 'logging' => ['enabled' => false],
                 'providers' => ['disabled_providers' => $cfg['disabled_providers'] ?? []],
@@ -261,7 +261,7 @@ class SummarizeDocument implements ShouldQueue
 }
 ```
 
-Or, more idiomatically, set `cache.response_ttl > 0` globally and let the manager handle the memoisation itself.
+Or, more idiomatically, set `<provider>.cache.response_ttl > 0` (`bedrock.cache.response_ttl` or `azure_ai.cache.response_ttl`) and let the manager handle the memoisation itself.
 
 ---
 
@@ -321,7 +321,7 @@ return $manager->conversation('claude-sonnet-4')
 
 ## 10. Bypassing the cache without changing the prompt
 
-If you've enabled `cache.response_ttl` but want a forced fresh run, change the temperature or the max-tokens by a fraction:
+If you've enabled `<provider>.cache.response_ttl` but want a forced fresh run, change the temperature or the max-tokens by a fraction:
 
 ```php
 use Illuminate\Support\Facades\Cache;

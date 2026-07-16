@@ -417,7 +417,7 @@ return [
 ];
 ```
 
-> **Top-level inheritance.** Your config is merged with `core-ai`'s by Laravel, so `cache.response_ttl` and `cache.embedding_ttl` from the parent config are inherited. Override per-provider via `cache.response_ttl` in this file.
+> **Per-provider config.** `cache.response_ttl` and `cache.embedding_ttl` must be set per-provider. To set a value used by both Bedrock and Azure, write it under both `bedrock.cache.*` and `azure_ai.cache.*` blocks. The top-level `cache` block (if any) is ignored by the manager code.
 
 ---
 

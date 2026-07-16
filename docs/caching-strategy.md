@@ -30,18 +30,18 @@ Every cache layer uses SHA256 content hashes so cache keys are deterministic acr
 | `models_ttl` | `{platform}_models_*` | Provider model catalog. |
 | `usage_ttl` | `{platform}_usage_*` | Aggregated usage metrics. |
 | `pricing_ttl` | `{platform}_pricing_*` | Pricing tier table. |
-| `response_ttl` (v2.1.0) | `{platform}_response_{sha256(model\|system\|user\|max\|temp)}` | Full invoke result. |
-| `response_ttl` (multi-turn) | `{platform}_response_{sha256(model\|system\|json_messages\|max\|temp)}` | Full converse result. |
-| `embedding_ttl` | `{platform}_embeddings_{sha256(modelId\|dimensions\|text)}` | `{text: float[]}` row. |
+| `<provider>.cache.response_ttl` (v2.1.0) | `{platform}_response_{sha256(model\|system\|user\|max\|temp)}` | Full invoke result. |
+| `<provider>.cache.response_ttl` (multi-turn) | `{platform}_response_{sha256(model\|system\|json_messages\|max\|temp)}` | Full converse result. |
+| `<provider>.cache.embedding_ttl` | `{platform}_embeddings_{sha256(modelId\|dimensions\|text)}` | `{text: float[]}` row. |
 | `idempotency-key` (v2.1.0) | `{platform}-{sha256(modelId\|content)}` | Not stored — passed upstream. |
 
 `{platform}` is the lowercased `platformName()` output plus `_ai` (`"aws_bedrock_ai"`, `"azure_openai_ai"`), which is why cache keys for one provider don't collide with another.
 
 ---
 
-## 2. Response cache (`cache.response_ttl`, v2.1.0)
+## 2. Response cache (`<provider>.cache.response_ttl`, v2.1.0)
 
-The single most impactful cost lever for deterministic prompts.
+The single most impactful cost lever for deterministic prompts. The TTL is per-provider — there is no shared root-level fallback. Set `bedrock.cache.response_ttl` for AWS Bedrock and `azure_ai.cache.response_ttl` for Azure OpenAI.
 
 ### When to enable
 
@@ -59,8 +59,15 @@ The single most impactful cost lever for deterministic prompts.
 
 ```php
 // config/core-ai.php
-'cache' => [
-    'response_ttl' => 3600, // memoise for 1 hour
+'bedrock' => [
+    'cache' => [
+        'response_ttl' => 3600, // memoise Bedrock responses for 1 hour
+    ],
+],
+'azure_ai' => [
+    'cache' => [
+        'response_ttl' => 3600, // memoise Azure responses for 1 hour
+    ],
 ],
 ```
 
@@ -70,7 +77,7 @@ Set `0` to disable (the default).
 
 Two options:
 
-1. Set `cache.response_ttl` to `0` for that environment.
+1. Set `<provider>.cache.response_ttl` to `0` for that environment.
 2. Send a unique request — change `userMessage`, `temperature`, or `maxTokens` by even one unit. The SHA256 hash will not match and the cache miss path runs.
 
 ### Cost math
@@ -84,9 +91,9 @@ Cache hits still pass through `fireInvokedEvent()`. Core-ai's `AbstractAiManager
 
 ---
 
-## 3. Embedding cache (`cache.embedding_ttl`, v2.1.0)
+## 3. Embedding cache (`<provider>.cache.embedding_ttl`, v2.1.0)
 
-Embeddings are deterministic — same model + same text + same dimensions = same vector. The package memoise them per `(modelId, dimensions, sha256(text))` for 7 days by default (`604800` seconds).
+Embeddings are deterministic — same model + same text + same dimensions = same vector. The package memoise them per `(modelId, dimensions, sha256(text))` for 7 days by default (`604800` seconds). The TTL is per-provider — `bedrock.cache.embedding_ttl` for AWS Bedrock and `azure_ai.cache.embedding_ttl` for Azure OpenAI.
 
 The `embed()` method is not part of core-ai's `AiManagerContract` or `AbstractAiManager`; it is implemented by the `ubxty/bedrock-ai` and `ubxty/azure-ai` provider managers. With one of those provider packages installed:
 
@@ -108,11 +115,18 @@ If a particular row's source text has changed (you have an updated version), cal
 
 ### Bumping the TTL
 
-Set `cache.embedding_ttl` in your published config:
+Set `<provider>.cache.embedding_ttl` in your published config:
 
 ```php
-'cache' => [
-    'embedding_ttl' => 30 * 24 * 3600, // 30 days, for slow-moving corpora
+'bedrock' => [
+    'cache' => [
+        'embedding_ttl' => 30 * 24 * 3600, // 30 days, for slow-moving corpora
+    ],
+],
+'azure_ai' => [
+    'cache' => [
+        'embedding_ttl' => 30 * 24 * 3600,
+    ],
 ],
 ```
 
