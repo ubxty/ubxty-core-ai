@@ -35,7 +35,18 @@ use Ubxty\CoreAi\Exceptions\RateLimitException;
  */
 class ConverseClient extends AbstractLLMClient
 {
-    use HasConverseFormatting;
+    use HasConverseFormatting {
+        // v2.3.1 compat: the trait provides applyCachePoints() but the
+        // override below shadows it. Alias it so the override can call
+        // back into the real implementation via $this->applyCachePointsFromTrait().
+        // Without this, the override's parent::applyCachePoints() call resolves
+        // to AbstractLLMClient (the parent class), which doesn't define
+        // applyCachePoints() — only HasConverseFormatting does — and the call
+        // site fires a class-load-time fatal when anchors are non-empty:
+        //
+        //     Call to undefined method Ubxty\CoreAi\Client\AbstractLLMClient::applyCachePoints()
+        applyCachePoints as private applyCachePointsFromTrait;
+    }
 
     /**
      * Optional pre-built AWS SDK client for IAM-mode callers.
@@ -428,7 +439,11 @@ class ConverseClient extends AbstractLLMClient
         $saved = $this->promptCachePoints;
         $this->promptCachePoints = $anchors;
         try {
-            return parent::applyCachePoints($messages, $system, $modelId);
+            // v2.3.1 compat: parent::applyCachePoints() doesn't exist on
+            // AbstractLLMClient — the real implementation lives in the
+            // HasConverseFormatting trait, aliased above as
+            // applyCachePointsFromTrait so the override can call back into it.
+            return $this->applyCachePointsFromTrait($messages, $system, $modelId);
         } finally {
             $this->promptCachePoints = $saved;
         }
