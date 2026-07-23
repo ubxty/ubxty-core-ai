@@ -527,4 +527,312 @@ return [
 
     ],
 
+
+    'anthropic_ai' => [
+
+    'default' => 'default',
+
+    'connections' => [
+        'default' => [
+            'keys' => [
+                [
+                    'label' => 'Primary',
+                    'api_key' => env('ANTHROPIC_API_KEY', ''),
+                    'anthropic_version' => env('ANTHROPIC_VERSION', '2023-06-01'),
+                    'base_url' => env('ANTHROPIC_BASE_URL', 'https://api.anthropic.com'),
+                ],
+            ],
+        ],
+    ],
+
+    'defaults' => [
+        'model' => env('ANTHROPIC_DEFAULT_MODEL', 'claude-sonnet-4-5-20250929'),
+        'image_model' => env('ANTHROPIC_DEFAULT_IMAGE_MODEL', 'claude-sonnet-4-5-20250929'),
+    ],
+
+    'retry' => [
+        'max_retries' => 3,
+        'base_delay' => 2,
+    ],
+
+    'cache' => [
+        'response_ttl' => 0,
+        'models_ttl' => 3600,
+    ],
+
+    'prompt_caching' => [
+        'points' => ['system', 'last_user'],
+    ],
+
+    'logging' => [
+        'enabled' => env('ANTHROPIC_LOGGING_ENABLED', false),
+        'channel' => env('ANTHROPIC_LOGGING_CHANNEL', 'stack'),
+    ],
+
+    'limits' => [
+        'daily' => env('ANTHROPIC_DAILY_LIMIT'),
+        'monthly' => env('ANTHROPIC_MONTHLY_LIMIT'),
+    ],
+
+    'health_check' => [
+        'enabled' => env('ANTHROPIC_HEALTH_CHECK_ENABLED', false),
+        'path' => env('ANTHROPIC_HEALTH_CHECK_PATH', '/health/anthropic'),
+        'middleware' => ['api'],
+    ],
+
+    'aliases' => [
+        'claude-sonnet' => 'claude-sonnet-4-5-20250929',
+        'claude-opus' => 'claude-opus-4-1-20250805',
+        'claude-haiku' => 'claude-haiku-4-5-20251001',
+    ],
+
+    'models' => [
+        'default' => [
+            'claude-sonnet-4-5-20250929' => [
+                'name' => 'Claude Sonnet 4.5',
+                'provider' => 'Anthropic',
+                'context_window' => 200000,
+                'max_tokens' => 8192,
+                'capabilities' => ['text', 'vision', 'tool_use', 'prompt_caching'],
+                'input_modalities' => ['text', 'image'],
+                'is_active' => true,
+            ],
+            'claude-opus-4-1-20250805' => [
+                'name' => 'Claude Opus 4.1',
+                'provider' => 'Anthropic',
+                'context_window' => 200000,
+                'max_tokens' => 8192,
+                'capabilities' => ['text', 'vision', 'tool_use', 'prompt_caching'],
+                'input_modalities' => ['text', 'image'],
+                'is_active' => true,
+            ],
+            'claude-haiku-4-5-20251001' => [
+                'name' => 'Claude Haiku 4.5',
+                'provider' => 'Anthropic',
+                'context_window' => 200000,
+                'max_tokens' => 8192,
+                'capabilities' => ['text', 'vision', 'tool_use', 'prompt_caching'],
+                'input_modalities' => ['text', 'image'],
+                'is_active' => true,
+            ],
+        ],
+    ],
+
+],
+
+    'openai_ai' => [
+
+    'default' => 'default',
+
+    'connections' => [
+        'default' => [
+            'keys' => [
+                [
+                    'label' => 'Primary',
+                    'api_key' => env('OPENAI_API_KEY', ''),
+                    'organization' => env('OPENAI_ORGANIZATION'),
+                    'project' => env('OPENAI_PROJECT'),
+                    'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com'),
+                ],
+            ],
+        ],
+    ],
+
+    'defaults' => [
+        'model' => env('OPENAI_DEFAULT_MODEL', 'gpt-5'),
+        'image_model' => env('OPENAI_DEFAULT_IMAGE_MODEL', 'gpt-5'),
+    ],
+
+    'retry' => [
+        'max_retries' => 3,
+        'base_delay' => 2,
+    ],
+
+    'cache' => [
+        'response_ttl' => 0,
+        'models_ttl' => 3600,
+    ],
+
+    'prompt_caching' => [
+        'enabled' => env('OPENAI_PROMPT_CACHING_ENABLED', false),
+        'points' => [],
+    ],
+
+    'logging' => [
+        'enabled' => env('OPENAI_LOGGING_ENABLED', false),
+        'channel' => env('OPENAI_LOGGING_CHANNEL', 'stack'),
+    ],
+
+    'limits' => [
+        'daily' => env('OPENAI_DAILY_LIMIT'),
+        'monthly' => env('OPENAI_MONTHLY_LIMIT'),
+    ],
+
+    'health_check' => [
+        'enabled' => env('OPENAI_HEALTH_CHECK_ENABLED', false),
+        'path' => env('OPENAI_HEALTH_CHECK_PATH', '/health/openai'),
+        'middleware' => ['api'],
+    ],
+
+    'aliases' => [
+        'gpt-5' => 'gpt-5',
+        'gpt-5-mini' => 'gpt-5-mini',
+        'gpt-4o' => 'gpt-4o',
+        'gpt-4o-mini' => 'gpt-4o-mini',
+        'o3' => 'o3',
+        'o4-mini' => 'o4-mini',
+    ],
+
+    'models' => [
+        'default' => [
+            'gpt-5' => [
+                'name' => 'GPT-5',
+                'provider' => 'OpenAI',
+                'context_window' => 400000,
+                'max_tokens' => 16384,
+                'capabilities' => ['text', 'vision', 'tool_use', 'json_mode', 'reasoning'],
+                'input_modalities' => ['text', 'image'],
+                'is_active' => true,
+            ],
+            'gpt-5-mini' => [
+                'name' => 'GPT-5 Mini',
+                'provider' => 'OpenAI',
+                'context_window' => 200000,
+                'max_tokens' => 8192,
+                'capabilities' => ['text', 'vision', 'tool_use', 'json_mode', 'reasoning'],
+                'input_modalities' => ['text', 'image'],
+                'is_active' => true,
+            ],
+            'gpt-4o' => [
+                'name' => 'GPT-4o',
+                'provider' => 'OpenAI',
+                'context_window' => 128000,
+                'max_tokens' => 4096,
+                'capabilities' => ['text', 'vision', 'tool_use', 'json_mode'],
+                'input_modalities' => ['text', 'image'],
+                'is_active' => true,
+            ],
+            'gpt-4o-mini' => [
+                'name' => 'GPT-4o Mini',
+                'provider' => 'OpenAI',
+                'context_window' => 128000,
+                'max_tokens' => 4096,
+                'capabilities' => ['text', 'vision', 'tool_use', 'json_mode'],
+                'input_modalities' => ['text', 'image'],
+                'is_active' => true,
+            ],
+            'o3' => [
+                'name' => 'o3',
+                'provider' => 'OpenAI',
+                'context_window' => 200000,
+                'max_tokens' => 8192,
+                'capabilities' => ['text', 'vision', 'tool_use', 'reasoning'],
+                'input_modalities' => ['text', 'image'],
+                'is_active' => true,
+            ],
+            'o4-mini' => [
+                'name' => 'o4-mini',
+                'provider' => 'OpenAI',
+                'context_window' => 200000,
+                'max_tokens' => 8192,
+                'capabilities' => ['text', 'vision', 'tool_use', 'reasoning'],
+                'input_modalities' => ['text', 'image'],
+                'is_active' => true,
+            ],
+        ],
+    ],
+
+],
+
+    'gemini_ai' => [
+
+    'default' => 'default',
+
+    'connections' => [
+        'default' => [
+            'keys' => [
+                [
+                    'label' => 'Primary',
+                    'api_key' => env('GOOGLE_GEMINI_API_KEY', env('GEMINI_API_KEY', '')),
+                    'base_url' => env('GOOGLE_GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com'),
+                ],
+            ],
+        ],
+    ],
+
+    'defaults' => [
+        'model' => env('GOOGLE_GEMINI_DEFAULT_MODEL', 'gemini-2.5-pro'),
+        'image_model' => env('GOOGLE_GEMINI_DEFAULT_IMAGE_MODEL', 'gemini-2.5-pro'),
+    ],
+
+    'retry' => [
+        'max_retries' => 3,
+        'base_delay' => 2,
+    ],
+
+    'cache' => [
+        'response_ttl' => 0,
+        'models_ttl' => 3600,
+    ],
+
+    'prompt_caching' => [
+        'enabled' => env('GOOGLE_GEMINI_PROMPT_CACHING_ENABLED', false),
+        'points' => [],
+    ],
+
+    'logging' => [
+        'enabled' => env('GOOGLE_GEMINI_LOGGING_ENABLED', false),
+        'channel' => env('GOOGLE_GEMINI_LOGGING_CHANNEL', 'stack'),
+    ],
+
+    'limits' => [
+        'daily' => env('GOOGLE_GEMINI_DAILY_LIMIT'),
+        'monthly' => env('GOOGLE_GEMINI_MONTHLY_LIMIT'),
+    ],
+
+    'health_check' => [
+        'enabled' => env('GOOGLE_GEMINI_HEALTH_CHECK_ENABLED', false),
+        'path' => env('GOOGLE_GEMINI_HEALTH_CHECK_PATH', '/health/gemini'),
+        'middleware' => ['api'],
+    ],
+
+    'aliases' => [
+        'gemini-pro' => 'gemini-2.5-pro',
+        'gemini-flash' => 'gemini-2.5-flash',
+        'gemini-flash-lite' => 'gemini-2.5-flash-lite',
+    ],
+
+    'models' => [
+        'default' => [
+            'gemini-2.5-pro' => [
+                'name' => 'Gemini 2.5 Pro',
+                'provider' => 'Google Gemini',
+                'context_window' => 1048576,
+                'max_tokens' => 8192,
+                'capabilities' => ['text', 'vision', 'tool_use', 'reasoning', 'json_mode', 'cached_content'],
+                'input_modalities' => ['text', 'image', 'audio', 'video'],
+                'is_active' => true,
+            ],
+            'gemini-2.5-flash' => [
+                'name' => 'Gemini 2.5 Flash',
+                'provider' => 'Google Gemini',
+                'context_window' => 1048576,
+                'max_tokens' => 8192,
+                'capabilities' => ['text', 'vision', 'tool_use', 'reasoning', 'json_mode', 'cached_content'],
+                'input_modalities' => ['text', 'image', 'audio', 'video'],
+                'is_active' => true,
+            ],
+            'gemini-2.5-flash-lite' => [
+                'name' => 'Gemini 2.5 Flash-Lite',
+                'provider' => 'Google Gemini',
+                'context_window' => 1048576,
+                'max_tokens' => 8192,
+                'capabilities' => ['text', 'vision', 'tool_use', 'json_mode', 'cached_content'],
+                'input_modalities' => ['text', 'image', 'audio', 'video'],
+                'is_active' => true,
+            ],
+        ],
+    ],
+
+],
 ];

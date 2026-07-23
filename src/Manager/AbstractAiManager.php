@@ -285,10 +285,8 @@ abstract class AbstractAiManager implements AiManagerContract
 
     /**
      * Platform-specific invoke implementation.
-     *
-     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cost: float, latency_ms: int, status: string, key_used: string, model_id: string}
      */
-    abstract protected function performInvoke(
+    protected function performInvoke(
         string $modelId,
         string $systemPrompt,
         string $userMessage,
@@ -296,15 +294,18 @@ abstract class AbstractAiManager implements AiManagerContract
         float $temperature,
         ?array $pricing,
         ?string $connection
-    ): array;
+    ): array {
+        return $this->performPlatformCall(
+            'invoke', $modelId, $systemPrompt,
+            [['role' => 'user', 'content' => $userMessage]],
+            $maxTokens, $temperature, $connection,
+        );
+    }
 
     /**
      * Platform-specific converse implementation.
-     *
-     * @param  array<int, array{role: string, content: string|array}>  $messages
-     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, stop_reason: string, latency_ms: int, model_id: string, key_used: string}
      */
-    abstract protected function performConverse(
+    protected function performConverse(
         string $modelId,
         array $messages,
         string $systemPrompt,
@@ -312,15 +313,17 @@ abstract class AbstractAiManager implements AiManagerContract
         float $temperature,
         ?string $connection,
         ?array $cachePointsOverride = null
-    ): array;
+    ): array {
+        return $this->performPlatformCall(
+            'converse', $modelId, $systemPrompt, $messages,
+            $maxTokens, $temperature, $connection, $cachePointsOverride,
+        );
+    }
 
     /**
      * Platform-specific streaming converse implementation.
-     *
-     * @param  array<int, array{role: string, content: string|array}>  $messages
-     * @param  callable(string $chunk): void  $onChunk
      */
-    abstract protected function performConverseStream(
+    protected function performConverseStream(
         string $modelId,
         array $messages,
         callable $onChunk,
@@ -329,7 +332,144 @@ abstract class AbstractAiManager implements AiManagerContract
         float $temperature,
         ?string $connection,
         ?array $cachePointsOverride = null
-    ): array;
+    ): array {
+        return $this->performPlatformCall(
+            'converseStream', $modelId, $systemPrompt, $messages,
+            $maxTokens, $temperature, $connection, $cachePointsOverride,
+            null, $onChunk,
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────
+    //  performPlatformCall — opt-in template-method dispatch
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * Template-method dispatch for the v2.2 perform* hooks.
+     *
+     * When a subclass implements the three `platform*` methods below
+     * (platformInvoke / platformConverse / platformConverseStream),
+     * overriding `performInvoke` etc. to call `performPlatformCall('invoke', ...)`
+     * switches the manager over to the new wire-format path. Subclasses
+     * that don't implement the platform* hooks stay on the legacy
+     * `performInvoke` body.
+     *
+     * The legacy `performInvoke` / `performConverse` / `performConverseStream`
+     * remain abstract above — the platform* hooks are an OPT-IN alternative
+     * for v2.2+ clients. bedrock-ai's BedrockManager implements them so its
+     *   `BedrockClient extends core-ai/Standards/Converse/ConverseClient`
+     * refactor lands cleanly. azure-ai's AzureManager can adopt them in v2.3.
+     *
+     * BC guarantee: any v2.1.x subclass that doesn't override the
+     * `platform*` methods keeps working — `performPlatformCall()` only
+     * activates the new path when the subclass declares intent via
+     * `usePlatformHook(): true`.
+     */
+    protected function performPlatformCall(
+        string $verb,
+        string $modelId,
+        string $systemPrompt,
+        array $messages,
+        int $maxTokens,
+        float $temperature,
+        ?string $connection,
+        ?array $cachePointsOverride = null,
+        ?\Ubxty\CoreAi\Support\CacheKeyContext $ctx = null,
+        ?callable $onChunk = null,
+    ): array {
+        if (! $this->usePlatformHook()) {
+            throw new \LogicException(
+                static::class . ' does not opt into performPlatformCall. '
+                . 'Override usePlatformHook(): true after implementing platformInvoke / platformConverse / platformConverseStream.'
+            );
+        }
+
+        $idempotencyKey = $ctx !== null ? hash('sha256', $ctx->conversationId . '|' . $ctx->promptVersion . '|' . $modelId) : null;
+
+        return match ($verb) {
+            'invoke' => $this->platformInvoke(
+                $modelId, $systemPrompt, $messages[0]['content'] ?? '',
+                $maxTokens, $temperature, $connection, $idempotencyKey,
+            ),
+            'converse' => $this->platformConverse(
+                $modelId, $messages, $systemPrompt, $maxTokens, $temperature,
+                $connection, $cachePointsOverride, $idempotencyKey,
+            ),
+            'converseStream' => $this->platformConverseStream(
+                $modelId, $messages, $onChunk, $systemPrompt, $maxTokens, $temperature,
+                $connection, $cachePointsOverride, $idempotencyKey,
+            ),
+            default => throw new \InvalidArgumentException(
+                "performPlatformCall: unknown verb [{$verb}]"
+            ),
+        };
+    }
+
+    /**
+     * Opt-in flag: return true in a subclass after implementing the
+     * three `platform*` methods below.
+     */
+    protected function usePlatformHook(): bool
+    {
+        return false;
+    }
+
+    /**
+     * Platform-specific invoke implementation for the v2.2 platform hook.
+     * Override alongside usePlatformHook(): true to switch performInvoke
+     * onto the new path.
+     *
+     * @return array{response: string, input_tokens: int, output_tokens: int, total_tokens: int, cost: float, latency_ms: int, status: string, key_used: string, model_id: string}
+     */
+    protected function platformInvoke(
+        string $modelId,
+        string $systemPrompt,
+        string $userMessage,
+        int $maxTokens,
+        float $temperature,
+        ?string $connection,
+        ?string $idempotencyKey,
+    ): array {
+        throw new \LogicException(static::class . '::platformInvoke() not implemented');
+    }
+
+    /**
+     * Platform-specific converse implementation for the v2.2 platform hook.
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     */
+    protected function platformConverse(
+        string $modelId,
+        array $messages,
+        string $systemPrompt,
+        int $maxTokens,
+        float $temperature,
+        ?string $connection,
+        ?array $cachePointsOverride,
+        ?string $idempotencyKey,
+    ): array {
+        throw new \LogicException(static::class . '::platformConverse() not implemented');
+    }
+
+    /**
+     * Platform-specific streaming converse implementation for the v2.2 platform hook.
+     *
+     * @param  array<int, array{role: string, content: string|array}>  $messages
+     * @param  callable(string $chunk, bool $isFinal): void  $onChunk
+     */
+    protected function platformConverseStream(
+        string $modelId,
+        array $messages,
+        callable $onChunk,
+        string $systemPrompt,
+        int $maxTokens,
+        float $temperature,
+        ?string $connection,
+        ?array $cachePointsOverride,
+        ?string $idempotencyKey,
+    ): array {
+        throw new \LogicException(static::class . '::platformConverseStream() not implemented');
+    }
 
     // ─────────────────────────────────────────────────────────
     //  Abstract platform methods (testing, models)
@@ -341,13 +481,85 @@ abstract class AbstractAiManager implements AiManagerContract
 
     abstract public function fetchModels(?string $connection = null): array;
 
-    abstract public function syncModels(?string $connection = null): int;
+    /**
+     * Count of configured models on the given connection.
+     *
+     * Default uses {@see getConfiguredModels()} so the 4 satellite
+     * managers don't duplicate it. A subclass may override if it has
+     * a richer model source (e.g. Bedrock fetches them from AWS live).
+     */
+    public function syncModels(?string $connection = null): int
+    {
+        $connection ??= $this->config['default'] ?? 'default';
 
-    abstract public function isConfigured(?string $connection = null): bool;
+        return count($this->getConfiguredModels($connection));
+    }
 
-    abstract public function supportsStreaming(?string $connection = null): bool;
+    /**
+     * Whether the platform has at least one configured credential.
+     *
+     * Default delegates the per-key emptiness check to
+     * {@see keyConfigured()} so subclasses can override that one
+     * method instead of repeating the connection-resolution boilerplate
+     * (Bedrock keeps its full override because IAM-vs-bearer branching
+     * needs the credential-manager in a try/catch).
+     */
+    public function isConfigured(?string $connection = null): bool
+    {
+        $connection ??= $this->config['default'] ?? 'default';
+        $connectionConfig = $this->config['connections'][$connection] ?? null;
 
-    abstract public function getCredentialInfo(?string $connection = null): array;
+        if (! $connectionConfig) {
+            return false;
+        }
+
+        $keys = $connectionConfig['keys'] ?? [];
+
+        if (empty($keys)) {
+            return false;
+        }
+
+        return $this->keyConfigured($keys[0]);
+    }
+
+    /**
+     * Per-key emptiness check. Default is "api_key present and non-empty",
+     * which fits all 3 non-Bedrock satellites. Bedrock overrides
+     * isConfigured() wholesale and ignores this template.
+     */
+    protected function keyConfigured(array $key): bool
+    {
+        return ! empty($key['api_key']);
+    }
+
+    /**
+     * Whether streamed conversations are supported on this platform.
+     *
+     * Default is `true`. Bedrock overrides it to gate on
+     * `!isBearerMode()` (Bearer tokens don't support streaming), and
+     * any future provider that lacks streaming can do the same.
+     */
+    public function supportsStreaming(?string $connection = null): bool
+    {
+        return true;
+    }
+
+    /**
+     * Safe wrapper around `client()->getCredentialManager()->list()`.
+     *
+     * Returns `[]` on any Throwable (missing connection, empty keys,
+     * unconfigured credential manager) so callers never need to
+     * try/catch their own. Bedrock previously propagated the throw —
+     * this is a strict improvement.
+     */
+    public function getCredentialInfo(?string $connection = null): array
+    {
+        try {
+            return $this->client($connection)->getCredentialManager()->list();
+        } catch (\Throwable) {
+            return [];
+        }
+    }
 
     abstract public function platformName(): string;
 
@@ -404,10 +616,96 @@ abstract class AbstractAiManager implements AiManagerContract
 
     /**
      * Fetch models for grouping from the database or other storage.
-     * Returns an empty array to fall back to `fetchModels()`.
+     * Default implementation normalizes the per-platform configured
+     * model spec map into the shape consumed by getModelsGrouped().
+     * Subclasses only need to declare `providerDefault()`; the rest is
+     * lifted here so the 4 satellite managers don't duplicate it.
+     *
+     * @return array<int, array<string, mixed>>
      */
     protected function fetchModelsForGrouping(?string $connection): array
     {
+        $defaultProvider = $this->providerDefault();
+        $models = $this->getConfiguredModels($connection ?? $this->config['default'] ?? 'default');
+
+        return array_values(array_map(
+            fn (string $modelId, array $spec): array => [
+                'model_id'         => $modelId,
+                'name'             => $spec['name'] ?? $modelId,
+                'provider'         => $spec['provider'] ?? $defaultProvider,
+                'context_window'   => (int) ($spec['context_window'] ?? 0),
+                'max_tokens'       => (int) ($spec['max_tokens'] ?? 0),
+                'capabilities'     => (array) ($spec['capabilities'] ?? []),
+                'input_modalities' => (array) ($spec['input_modalities'] ?? ['text']),
+                'is_active'        => (bool) ($spec['is_active'] ?? true),
+            ],
+            array_keys($models),
+            array_values($models),
+        ));
+    }
+
+    /**
+     * Provider label used as the fallback 'provider' field when a
+     * configured model spec doesn't declare its own.
+     *
+     * Subclasses return their platform name (e.g. 'Anthropic',
+     * 'OpenAI', 'Google Gemini', or 'Other' for multi-provider Bedrock).
+     */
+    abstract protected function providerDefault(): string;
+
+    /**
+     * Returns the configured model specs for $connection, keyed by
+     * model_id. If the top-level config has a per-connection bucket
+     * (`models[$connection]`), that wins; otherwise the flat config is
+     * filtered by the optional `connection` field on each spec.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    protected function getConfiguredModels(string $connection): array
+    {
+        $all = $this->config['models'] ?? [];
+
+        if (! is_array($all)) {
+            return [];
+        }
+
+        if (isset($all[$connection]) && is_array($all[$connection])) {
+            return $all[$connection];
+        }
+
+        return array_filter(
+            $all,
+            fn ($spec) => is_array($spec)
+                && (! isset($spec['connection']) || $spec['connection'] === $connection),
+        );
+    }
+
+    /**
+     * Capabilities lookup for a model_id. Tries direct id match first;
+     * falls back to scanning by `name` and `alias` so that
+     * modelSupportsCaching() works whether callers pass the bare id
+     * (`gpt-4o`) or a display name / alias.
+     *
+     * @return string[]
+     */
+    protected function capabilitiesFor(string $modelId): array
+    {
+        $models = $this->getConfiguredModels($this->config['default'] ?? 'default');
+
+        if (isset($models[$modelId]) && is_array($models[$modelId])) {
+            return (array) ($models[$modelId]['capabilities'] ?? []);
+        }
+
+        foreach ($models as $spec) {
+            if (! is_array($spec)) {
+                continue;
+            }
+
+            if (($spec['name'] ?? null) === $modelId || ($spec['alias'] ?? null) === $modelId) {
+                return (array) ($spec['capabilities'] ?? []);
+            }
+        }
+
         return [];
     }
 
@@ -459,10 +757,22 @@ abstract class AbstractAiManager implements AiManagerContract
 
     /**
      * Get the cache key prefix for this platform.
+     *
+     * Strips a leading 'AWS ' from the platform name so Bedrock's
+     * native name 'AWS Bedrock' produces the legacy prefix 'bedrock_ai'
+     * rather than the noisy 'aws_bedrock_ai' (and lets the override in
+     * BedrockManager be deleted — the cache-key namespace stays
+     * byte-identical for in-flight daily/monthly cost counters).
      */
     protected function cachePrefix(): string
     {
-        return strtolower(str_replace(' ', '_', $this->platformName())).'_ai';
+        $name = $this->platformName();
+
+        if (str_starts_with($name, 'AWS ')) {
+            $name = substr($name, 4);
+        }
+
+        return strtolower(str_replace(' ', '_', $name)).'_ai';
     }
 
     protected function checkCostLimits(): void
