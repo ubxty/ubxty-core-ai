@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.3.5] - 2026-07-24
+
+### Fixed
+- OpenAIClient::sendStreamingRequest: read the SSE body via `read()` instead of `foreach`. The Laravel HTTP client returns a non-seekable Guzzle stream when `stream => true` is set, so the previous loop yielded nothing and every streaming call came back with 0 tokens.
+
+---
+
 ## [2.1.3] - 2026-07-14
 
 ### Documentation
