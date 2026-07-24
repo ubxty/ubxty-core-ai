@@ -33,7 +33,7 @@ use Ubxty\CoreAi\Exceptions\RateLimitException;
  * HTTP Bearer path is used; without a Bearer token either, runtime
  * ConfigurationException fires from `chatUrl()`.
  */
-class ConverseClient extends AbstractLLMClient
+abstract class ConverseClient extends AbstractLLMClient
 {
     use HasConverseFormatting {
         // v2.3.1 compat: the trait provides applyCachePoints() but the
