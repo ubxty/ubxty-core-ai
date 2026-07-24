@@ -127,7 +127,7 @@ class AnthropicManager extends AbstractAiManager
     protected function platformConverseStream(
         string $modelId,
         array $messages,
-        callable $onChunk,
+        ?callable $onChunk,
         string $systemPrompt,
         int $maxTokens,
         float $temperature,
