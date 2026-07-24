@@ -159,8 +159,19 @@ class OpenAIClient extends AbstractLLMClient
 
         $response->throw();
 
+        // Laravel HTTP client returns a non-seekable Guzzle stream when
+        // `stream => true` is set, so `foreach ($stream as $chunk)` yields
+        // nothing — the stream does not implement Iterator. Read with
+        // `read()` instead, which works on every PSR-7 stream regardless
+        // of seekability.
+        $stream = $response->toPsrResponse()->getBody();
+
         $buffer = '';
-        foreach ($response->toPsrResponse()->getBody() as $chunk) {
+        while (! $stream->eof()) {
+            $chunk = $stream->read(8192);
+            if ($chunk === '') {
+                break;
+            }
             $buffer .= $chunk;
             while (($pos = strpos($buffer, "\n")) !== false) {
                 $line = trim(substr($buffer, 0, $pos));
@@ -188,9 +199,11 @@ class OpenAIClient extends AbstractLLMClient
                 $delta = $json['choices'][0]['delta'] ?? [];
                 if (isset($delta['content'])) {
                     $text = (string) $delta['content'];
-                    $outputText .= $text;
-                    if ($onDelta !== null) {
-                        $onDelta($text);
+                    if ($text !== '') {
+                        $outputText .= $text;
+                        if ($onDelta !== null) {
+                            $onDelta($text);
+                        }
                     }
                 }
                 if (isset($delta['tool_calls'])) {
