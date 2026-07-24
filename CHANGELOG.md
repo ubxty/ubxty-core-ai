@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.3.6] - 2026-07-24
+
+### Fixed
+- OpenAIClient::sendStreamingRequest: capture `prompt_tokens_details.cached_tokens` and `cache_creation_input_tokens` from the streaming `usage` chunks and surface them in the returned envelope so `parseResponse()` can populate `LLMUsage::cachedReadTokens` / `cachedWriteTokens`. Previously the streaming path only read `prompt_tokens` / `completion_tokens`, so cache stats from Azure v1 were always reported as 0 in the chat `/stats` panel.
+
+---
+
 ## [2.3.5] - 2026-07-24
 
 ### Fixed

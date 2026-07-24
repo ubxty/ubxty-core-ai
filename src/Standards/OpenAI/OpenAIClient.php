@@ -146,6 +146,8 @@ class OpenAIClient extends AbstractLLMClient
         $outputText = '';
         $inputTokens = 0;
         $outputTokens = 0;
+        $cacheReadTokens = 0;
+        $cacheWriteTokens = 0;
         $toolCalls = [];
 
         $response = Http::withHeaders($headers)
@@ -194,6 +196,11 @@ class OpenAIClient extends AbstractLLMClient
                 if (isset($json['usage'])) {
                     $inputTokens = (int) ($json['usage']['prompt_tokens'] ?? $inputTokens);
                     $outputTokens = (int) ($json['usage']['completion_tokens'] ?? $outputTokens);
+                    // Azure v1 / Anthropic-style prompt caching fields.
+                    // Public OpenAI emits `cached_tokens` here; Azure AI Foundry
+                    // emits `cache_creation_input_tokens` at the top level too.
+                    $cacheReadTokens = (int) ($json['usage']['prompt_tokens_details']['cached_tokens'] ?? $cacheReadTokens);
+                    $cacheWriteTokens = (int) ($json['usage']['cache_creation_input_tokens'] ?? $cacheWriteTokens);
                 }
 
                 $delta = $json['choices'][0]['delta'] ?? [];
@@ -250,6 +257,8 @@ class OpenAIClient extends AbstractLLMClient
                 'prompt_tokens' => $inputTokens,
                 'completion_tokens' => $outputTokens,
                 'total_tokens' => $inputTokens + $outputTokens,
+                'prompt_tokens_details' => ['cached_tokens' => $cacheReadTokens],
+                'cache_creation_input_tokens' => $cacheWriteTokens,
             ],
             'model_id' => $modelId,
             'key_used' => $key['label'] ?? 'Primary',
@@ -267,6 +276,7 @@ class OpenAIClient extends AbstractLLMClient
         $inputTokens = (int) ($usage['prompt_tokens'] ?? 0);
         $outputTokens = (int) ($usage['completion_tokens'] ?? 0);
         $cachedTokens = (int) ($usage['prompt_tokens_details']['cached_tokens'] ?? 0);
+        $cacheWriteInputTokens = (int) ($usage['cache_creation_input_tokens'] ?? 0);
         $finishReason = (string) ($choice['finish_reason'] ?? 'stop');
 
         $toolCalls = [];
@@ -288,7 +298,7 @@ class OpenAIClient extends AbstractLLMClient
                 inputTokens: max(0, $inputTokens - $cachedTokens),
                 outputTokens: $outputTokens,
                 cachedReadTokens: $cachedTokens,
-                cachedWriteTokens: 0,
+                cachedWriteTokens: $cacheWriteInputTokens,
             ),
             modelId: (string) ($raw['model_id'] ?? $modelId),
             keyLabel: (string) ($raw['key_used'] ?? ''),
