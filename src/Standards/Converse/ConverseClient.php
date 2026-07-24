@@ -56,8 +56,10 @@ class ConverseClient extends AbstractLLMClient
      */
     protected ?BedrockRuntimeClient $sdkClient = null;
 
-    /** @var AbstractCredentialManager */
-    protected $credentials;
+    // $credentials is inherited from AbstractLLMClient via HasRetryLogic
+    // (typed as AbstractCredentialManager). Do not redeclare here — PHP 8.0+
+    // treats a child property declaration with a different/missing type as
+    // incompatible with the parent, causing a class-load-time fatal.
 
     public function __construct(
         AbstractCredentialManager $credentials,

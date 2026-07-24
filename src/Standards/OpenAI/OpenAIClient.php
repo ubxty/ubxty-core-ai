@@ -497,7 +497,4 @@ class OpenAIClient extends AbstractLLMClient
             $this->promptCachePoints = $saved;
         }
     }
-
-    /** @var AbstractCredentialManager */
-    protected $credentials;
 }
