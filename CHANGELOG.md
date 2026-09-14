@@ -6,6 +6,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and 
 
 ---
 
+## [2.4.1] - 2026-09-14
+
+### Added
+- **`ImageGenerationOptions` contract** — readonly DTO carrying `n`, `size`, `quality`, `negativePrompt`, `seed`, `steps`, `cfgScale`, `strength`, `mask`, `inputFidelity`, `persist`, `disk`, `dir`, `filenamePrefix`, `metadata`. Accepts snake_case and camelCase keys via the controller.
+- **`ImageResult` and `ImageUsage` contracts** — readonly DTOs returned by the v2.2+ client path for image generation; `ImageResult` carries bytes, mime, revised prompt, latency, cached flag, raw payload. `ImageUsage` carries image count, input / output tokens, cost.
+- **`ImagePersistence` helper** — static `persist(bytes, mimeType, disk, dir, prefix)` that validates MIME (PNG / JPEG / WEBP), decodes base64 if needed, generates ULID filename, and returns `{path, url, disk}` from Laravel Storage.
+- **`AbstractAiManager::generateImage($modelId, $prompt, ?ImageGenerationOptions, ?$connection)`** — top-level entry point. Gated on `capabilities ⊇ ['image_generation']`; reads `core-ai.<provider>.storage.disk / dir` defaults; persists via `ImagePersistence`; tracks cost via `calculateImageCost`; fires `AiInvoked` with image-only fields.
+- **`AbstractAiManager::editImage($modelId, $prompt, $sourceImagePath, ?$maskPath, ?ImageGenerationOptions, ?$connection)`** — image-input variant. Empty-prompt guard throws `ConfigurationException`.
+- **`AbstractAiManager::variationImage($modelId, $sourceImagePath, ?ImageGenerationOptions, ?$connection)`** — source-image-only variant.
+- **`performPlatformCall()` dispatcher** — new `generateImage | editImage | variationImage` arms route to satellite `platform*` hooks.
+- **`calculateImageCost(int $count, array $pricing): float`** — pricing keys: `price_per_image`, optional `price_per_image_<W>x<H>` overrides (1024x1024, 1024x1536, 1536x1024).
+- **`ModelSpecResolver::outputModalities($modelId)`** — explicit clauses for `gpt-image*`, `dall-e*`, `nova-canvas`, `titan-image`, `stable-image*`, `stable-diffusion`, `flux`, `mai-image`, `luma/ray`. `supportsOutputModality()` helper on top. Sentinel `context_window: 0, max_tokens: 0` returned for image-gen families.
+- **`assertImageCapability($modelId, $operation)`** — throws `ConfigurationException` with the missing-capability message + operation context.
+- **`operationsFor($modelId)`** — returns the model's `operations` array from the catalogue.
+- **`AiInvoked` event** — extended constructor with `?string $operation`, `?int $imageCount`, `?string $savedPath`, `?string $mimeType`. Existing chat listeners ignore the new params transparently.
+- **`AbstractChatCommand` `/edit` REPL** — `/edit <source> [--mask=<mask>] <prompt>` parses inline.
+- **`AbstractModelsCommand` `[img-gen]` badge** — surfaces image-capable models in the `core-ai:models` listing.
+- **Bedrock catalogue (`core-ai.bedrock.models.default`)** — 18 image-gen entries: Amazon Nova Canvas, Titan Image Generator G1 v2, Stability monolithic (Core / Ultra / SD3.5 Large), and the 13 Stability single-operation utilities (Remove Background, Erase Object, Control Structure / Sketch, Style Guide, Search and Replace, Inpaint, Search and Recolor, Style Transfer, Conservative / Creative / Fast Upscale, Outpaint).
+- **Azure catalogue (`core-ai.azure_ai.models.default`)** — 14 image-gen entries: OpenAI `gpt-image-2 / 1.5 / 1 / 1-mini`, Black Forest Labs `flux-1.1-pro / flux-1-kontext-pro / flux.2-pro / flux.2-flex`, Microsoft `mai-image-2.6 / 2.6-flash / 2.5-pro / 2.5-flash / 2.5`, Bria `bria-2.3-fast`.
+- **Per-provider storage defaults** — `core-ai.storage.disk` / `core-ai.storage.dir` (env-overridable via `CORE_AI_IMAGE_DISK` / `CORE_AI_IMAGE_DIR`).
+- **`AiManagerContract` and `LLMClientContract`** — new method signatures (`generateImage`, `editImage`, `variationImage`) for the v2.2 client path.
+
+### Fixed
+- `core-ai.bedrock.models.default` and `core-ai.azure_ai.models.default` previously returned `[]` because the outer `'models' => array_filter([…])` wrapper filtered the single-element outer list and dropped the `default` key. The catalogue was unreachable from satellite packages; replaced with a plain assoc array.
+
+### Tests
+- `ImagePersistenceTest` — base64 round-trip, MIME validation, disk + dir override, ULID filename.
+- `ImageGenerationOptionsTest` — defaults, validation.
+- `ImageResultTest` — readonly construction.
+- `ModelSpecResolverOutputModalitiesTest` — every image-gen family.
+
+---
+
 ## [2.3.6] - 2026-07-24
 
 ### Fixed
