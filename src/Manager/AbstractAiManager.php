@@ -6,6 +6,8 @@ use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Ubxty\CoreAi\Client\ModelAliasResolver;
 use Ubxty\CoreAi\Contracts\AiManagerContract;
+use Ubxty\CoreAi\Contracts\ImageGenerationOptions;
+use Ubxty\CoreAi\Contracts\ImageResult;
 use Ubxty\CoreAi\Conversation\ConversationBuilder;
 use Ubxty\CoreAi\Events\AiInvoked;
 use Ubxty\CoreAi\Exceptions\ConfigurationException;
@@ -13,6 +15,7 @@ use Ubxty\CoreAi\Exceptions\CostLimitExceededException;
 use Ubxty\CoreAi\Logging\InvocationLogger;
 use Ubxty\CoreAi\Models\ModelSpecResolver;
 use Ubxty\CoreAi\Support\CacheKeyContext;
+use Ubxty\CoreAi\Support\ImagePersistence;
 use Ubxty\CoreAi\Support\TokenEstimator;
 
 abstract class AbstractAiManager implements AiManagerContract
@@ -280,6 +283,189 @@ abstract class AbstractAiManager implements AiManagerContract
     }
 
     // ─────────────────────────────────────────────────────────
+    //  Image generation (generate / edit / variation)
+    //  Wraps platform calls with cost tracking, persistence, events,
+    //  logging, and an aggressive response cache (image-gen is expensive).
+    // ─────────────────────────────────────────────────────────
+
+    public function generateImage(
+        string $modelId,
+        string $prompt,
+        ?ImageGenerationOptions $options = null,
+        ?string $connection = null,
+    ): array {
+        $modelId = $modelId ?: $this->defaultImageModel();
+
+        if (! $modelId) {
+            throw new ConfigurationException(
+                'No image model ID specified and no default image model configured. '
+                .'Set defaults.image_model in config/core-ai.php or pass a model ID explicitly.'
+            );
+        }
+
+        $this->checkCostLimits();
+        $modelId = $this->resolveAlias($modelId);
+        $options ??= new ImageGenerationOptions();
+        $this->assertImageCapability($modelId, 'generate');
+
+        $responseTtl = $this->imageCacheTtl();
+        $cacheKey = $responseTtl > 0
+            ? $this->imageCacheKey('generate', $modelId, $prompt, null, null, $options)
+            : null;
+
+        if ($cacheKey !== null) {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                $cached['cached'] = true;
+                $cached['latency_ms'] = 0;
+                $this->fireImageInvokedEvent($cached, 'generate');
+
+                return $cached;
+            }
+        }
+
+        $result = $this->performGenerateImage($modelId, $prompt, null, null, $options, $connection);
+
+        $count = $result->usage?->imageCount ?? 1;
+        $cost = $this->calculateImageCost($count, $this->pricingFor($modelId), $this->sizeKey($options));
+
+        $envelope = $this->projectImageEnvelope($result, $modelId, $cost, 'generate', $options);
+
+        $this->trackCost($cost);
+        $this->fireImageInvokedEvent($envelope, 'generate');
+        $this->getLogger()->log($envelope);
+
+        if ($cacheKey !== null) {
+            Cache::put($cacheKey, $envelope, $responseTtl);
+        }
+
+        return $envelope;
+    }
+
+    public function editImage(
+        string $modelId,
+        string $prompt,
+        string $sourceImagePath,
+        ?string $maskPath = null,
+        ?ImageGenerationOptions $options = null,
+        ?string $connection = null,
+    ): array {
+        if (trim($prompt) === '') {
+            throw new \InvalidArgumentException(
+                'editImage requires a non-empty prompt. A description of the edit is required.'
+            );
+        }
+
+        $this->assertSourceReadable($sourceImagePath);
+        if ($maskPath !== null) {
+            $this->assertSourceReadable($maskPath);
+        }
+
+        $modelId = $modelId ?: $this->defaultImageModel();
+
+        if (! $modelId) {
+            throw new ConfigurationException(
+                'No image model ID specified and no default image model configured. '
+                .'Set defaults.image_model in config/core-ai.php or pass a model ID explicitly.'
+            );
+        }
+
+        $this->checkCostLimits();
+        $modelId = $this->resolveAlias($modelId);
+        $options ??= new ImageGenerationOptions();
+        $this->assertImageCapability($modelId, 'edit');
+
+        $responseTtl = $this->imageCacheTtl();
+        $cacheKey = $responseTtl > 0
+            ? $this->imageCacheKey('edit', $modelId, $prompt, $sourceImagePath, $maskPath, $options)
+            : null;
+
+        if ($cacheKey !== null) {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                $cached['cached'] = true;
+                $cached['latency_ms'] = 0;
+                $this->fireImageInvokedEvent($cached, 'edit');
+
+                return $cached;
+            }
+        }
+
+        $result = $this->performEditImage($modelId, $prompt, $sourceImagePath, $maskPath, $options, $connection);
+
+        $count = $result->usage?->imageCount ?? 1;
+        $cost = $this->calculateImageCost($count, $this->pricingFor($modelId), $this->sizeKey($options));
+
+        $envelope = $this->projectImageEnvelope($result, $modelId, $cost, 'edit', $options);
+
+        $this->trackCost($cost);
+        $this->fireImageInvokedEvent($envelope, 'edit');
+        $this->getLogger()->log($envelope);
+
+        if ($cacheKey !== null) {
+            Cache::put($cacheKey, $envelope, $responseTtl);
+        }
+
+        return $envelope;
+    }
+
+    public function variationImage(
+        string $modelId,
+        string $sourceImagePath,
+        ?ImageGenerationOptions $options = null,
+        ?string $connection = null,
+    ): array {
+        $this->assertSourceReadable($sourceImagePath);
+
+        $modelId = $modelId ?: $this->defaultImageModel();
+
+        if (! $modelId) {
+            throw new ConfigurationException(
+                'No image model ID specified and no default image model configured. '
+                .'Set defaults.image_model in config/core-ai.php or pass a model ID explicitly.'
+            );
+        }
+
+        $this->checkCostLimits();
+        $modelId = $this->resolveAlias($modelId);
+        $options ??= new ImageGenerationOptions();
+        $this->assertImageCapability($modelId, 'variation');
+
+        $responseTtl = $this->imageCacheTtl();
+        $cacheKey = $responseTtl > 0
+            ? $this->imageCacheKey('variation', $modelId, '', $sourceImagePath, null, $options)
+            : null;
+
+        if ($cacheKey !== null) {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                $cached['cached'] = true;
+                $cached['latency_ms'] = 0;
+                $this->fireImageInvokedEvent($cached, 'variation');
+
+                return $cached;
+            }
+        }
+
+        $result = $this->performVariationImage($modelId, $sourceImagePath, $options, $connection);
+
+        $count = $result->usage?->imageCount ?? 1;
+        $cost = $this->calculateImageCost($count, $this->pricingFor($modelId), $this->sizeKey($options));
+
+        $envelope = $this->projectImageEnvelope($result, $modelId, $cost, 'variation', $options);
+
+        $this->trackCost($cost);
+        $this->fireImageInvokedEvent($envelope, 'variation');
+        $this->getLogger()->log($envelope);
+
+        if ($cacheKey !== null) {
+            Cache::put($cacheKey, $envelope, $responseTtl);
+        }
+
+        return $envelope;
+    }
+
+    // ─────────────────────────────────────────────────────────
     //  Abstract platform methods
     // ─────────────────────────────────────────────────────────
 
@@ -339,6 +525,45 @@ abstract class AbstractAiManager implements AiManagerContract
             null, $onChunk,
         );
     }
+
+    /**
+     * Platform-specific text-to-image implementation.
+     *
+     * Subclasses translate `$options` into the provider's wire format,
+     * call the upstream API, and return an {@see ImageResult} carrying
+     * raw image bytes. The manager wraps this call with cost tracking,
+     * auto-persistence, and event firing.
+     */
+    abstract protected function performGenerateImage(
+        string $modelId,
+        string $prompt,
+        ?string $sourceImagePath,
+        ?string $maskPath,
+        ImageGenerationOptions $options,
+        ?string $connection,
+    ): ImageResult;
+
+    /**
+     * Platform-specific image-edit (inpaint / mask-driven) implementation.
+     */
+    abstract protected function performEditImage(
+        string $modelId,
+        string $prompt,
+        string $sourceImagePath,
+        ?string $maskPath,
+        ImageGenerationOptions $options,
+        ?string $connection,
+    ): ImageResult;
+
+    /**
+     * Platform-specific image-variation implementation.
+     */
+    abstract protected function performVariationImage(
+        string $modelId,
+        string $sourceImagePath,
+        ImageGenerationOptions $options,
+        ?string $connection,
+    ): ImageResult;
 
     // ─────────────────────────────────────────────────────────
     //  performPlatformCall — opt-in template-method dispatch
@@ -879,6 +1104,305 @@ abstract class AbstractAiManager implements AiManagerContract
             ($inputTokens / 1000) * $inputPrice + ($outputTokens / 1000) * $outputPrice,
             6
         );
+    }
+
+    /**
+     * Per-image cost calculator. Image-gen billing is per-image, not per-token.
+     *
+     * Pricing keys (first match wins):
+     *   - `price_per_image_<sizeKey>` (e.g. `price_per_image_1024x1024`)
+     *   - `price_per_image` flat rate
+     *
+     * If neither key is present the call returns 0.0 — the manager still
+     * tracks invocations, just without spend.
+     */
+    protected function calculateImageCost(int $count, ?array $pricing = null, ?string $sizeKey = null): float
+    {
+        if ($count <= 0) {
+            return 0.0;
+        }
+
+        $pricing ??= [];
+
+        if ($sizeKey !== null && $sizeKey !== '') {
+            $cleaned = strtolower(str_replace(['x', '×', ' ', '-', '_'], '', $sizeKey));
+            if ($cleaned !== '') {
+                $perImage = $pricing['price_per_image_'.$cleaned] ?? null;
+                if (is_numeric($perImage)) {
+                    return round((float) $perImage * $count, 6);
+                }
+            }
+        }
+
+        $perImage = $pricing['price_per_image'] ?? null;
+        if (is_numeric($perImage)) {
+            return round((float) $perImage * $count, 6);
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * Pricing-table lookup for a configured model. Mirrors
+     * {@see capabilitiesFor()} — direct id match first, then scans by
+     * name / alias so callers can pass either form.
+     *
+     * @return array<string, mixed>
+     */
+    protected function pricingFor(string $modelId): array
+    {
+        $models = $this->getConfiguredModels($this->config['default'] ?? 'default');
+
+        if (isset($models[$modelId]) && is_array($models[$modelId])) {
+            return (array) ($models[$modelId]['pricing'] ?? []);
+        }
+
+        foreach ($models as $spec) {
+            if (! is_array($spec)) {
+                continue;
+            }
+            if (($spec['name'] ?? null) === $modelId || ($spec['alias'] ?? null) === $modelId) {
+                return (array) ($spec['pricing'] ?? []);
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * Throw if the model isn't flagged for image generation in its config spec,
+     * or if it doesn't expose the requested `operation` in its `operations`
+     * list (which would otherwise let `editImage`/`variationImage` succeed
+     * for `generate-only` models — surprising for callers).
+     */
+    protected function assertImageCapability(string $modelId, string $operation = 'generate'): void
+    {
+        $caps = $this->capabilitiesFor($modelId);
+
+        if (! in_array('image_generation', $caps, true)) {
+            throw new ConfigurationException(
+                "Model [{$modelId}] is not configured for image generation. "
+                ."Add `capabilities: ['image_generation']` to its entry in core-ai.<provider>.models."
+            );
+        }
+
+        $supported = $this->operationsFor($modelId);
+        if ($supported !== [] && ! in_array($operation, $supported, true)) {
+            throw new ConfigurationException(
+                "Model [{$modelId}] does not support the [{$operation}] image operation. "
+                ."Its `operations` allowlist is [".implode(', ', $supported).'].'
+            );
+        }
+    }
+
+    /**
+     * Read the `operations` allowlist for a model from its config spec.
+     * Empty list means "all operations allowed" (legacy configs without
+     * the key keep the old behaviour).
+     *
+     * @return string[]
+     */
+    protected function operationsFor(string $modelId): array
+    {
+        $models = $this->getConfiguredModels($this->config['default'] ?? 'default');
+
+        if (isset($models[$modelId]) && is_array($models[$modelId])) {
+            return (array) ($models[$modelId]['operations'] ?? []);
+        }
+
+        foreach ($models as $spec) {
+            if (! is_array($spec)) {
+                continue;
+            }
+            if (($spec['name'] ?? null) === $modelId || ($spec['alias'] ?? null) === $modelId) {
+                return (array) ($spec['operations'] ?? []);
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * Guard against missing / unreadable source files for edit / variation.
+     */
+    protected function assertSourceReadable(string $path): void
+    {
+        if (! is_file($path) || ! is_readable($path)) {
+            throw new \InvalidArgumentException(
+                "Source image is not readable: {$path}"
+            );
+        }
+
+        $size = @filesize($path);
+        if ($size !== false && $size > 15 * 1024 * 1024) {
+            throw new \InvalidArgumentException(
+                "Source image exceeds the 15 MB hard cap: {$path}"
+            );
+        }
+    }
+
+    /**
+     * Cache TTL for image-gen results, in seconds. Falls back to
+     * `cache.image_ttl` (default 86400) and treats 0 / negative as disabled.
+     */
+    protected function imageCacheTtl(): int
+    {
+        $ttl = (int) ($this->config['cache']['image_ttl'] ?? 86400);
+
+        return $ttl > 0 ? $ttl : 0;
+    }
+
+    /**
+     * Deterministic cache key for an image-gen operation.
+     *
+     * Includes the operation kind, model, prompt, source/mask byte hashes
+     * (when present), and the resolved size/seed/etc. so callers can hit
+     * the cache on identical inputs without going to the wire.
+     */
+    protected function imageCacheKey(
+        string $operation,
+        string $modelId,
+        string $prompt,
+        ?string $sourceImagePath,
+        ?string $maskPath,
+        ImageGenerationOptions $options,
+    ): string {
+        $sourceHash = $sourceImagePath && is_file($sourceImagePath)
+            ? hash_file('sha256', $sourceImagePath)
+            : '';
+        $maskHash = $maskPath && is_file($maskPath)
+            ? hash_file('sha256', $maskPath)
+            : '';
+
+        $raw = implode('|', [
+            $operation,
+            $modelId,
+            $prompt,
+            $sourceHash,
+            $maskHash,
+            (string) ($options->size ?? ''),
+            (string) ($options->width ?? ''),
+            (string) ($options->height ?? ''),
+            (string) ($options->quality ?? ''),
+            (string) ($options->negativePrompt ?? ''),
+            (string) ($options->seed ?? ''),
+            (string) ($options->steps ?? ''),
+            (string) ($options->cfgScale ?? ''),
+            (string) ($options->inputFidelity ?? ''),
+            (string) ($options->background ?? ''),
+            (string) ($options->outputFormat ?? ''),
+            (string) ($options->n ?? ''),
+            (string) ($options->filenamePrefix ?? ''),
+            // Persistence flag — `persist: true` and `persist: false` callers
+            // get distinct cache entries so the cached envelope's `path`
+            // matches the caller's intent.
+            ($options->persist === false ? 'no-persist' : 'persist'),
+        ]);
+
+        return $this->cachePrefix().':images:'.$operation.':'.hash('sha256', $raw);
+    }
+
+    /**
+     * Resolve the size key used for cost lookup.
+     */
+    protected function sizeKey(ImageGenerationOptions $options): ?string
+    {
+        if ($options->size) {
+            return $options->size;
+        }
+        if ($options->width !== null && $options->height !== null) {
+            return $options->width.'x'.$options->height;
+        }
+
+        return null;
+    }
+
+    /**
+     * Project an {@see ImageResult} into the legacy array envelope and
+     * persist the bytes to Laravel Storage (unless explicitly disabled).
+     *
+     * @return array{
+     *     bytes: string, mime: string, model_id: string, revised_prompt: ?string,
+     *     latency_ms: int, cost: float, key_used: string, cached: bool, status: string,
+     *     operation: string, usage: ?array{image_count: int, input_tokens: int, output_tokens: int},
+     *     path: ?string, url: ?string, disk: ?string, filename: ?string, storage_error: ?string
+     * }
+     */
+    protected function projectImageEnvelope(
+        ImageResult $result,
+        string $modelId,
+        float $cost,
+        string $operation,
+        ImageGenerationOptions $options,
+    ): array {
+        $envelope = [
+            'bytes' => $result->bytes,
+            'mime' => $result->mimeType,
+            'model_id' => $modelId,
+            'revised_prompt' => $result->revisedPrompt,
+            'latency_ms' => $result->latencyMs,
+            'cost' => $cost,
+            'key_used' => $result->keyLabel ?? 'unknown',
+            'cached' => $result->cached,
+            'status' => 'success',
+            'operation' => $operation,
+            'usage' => $result->usage ? [
+                'image_count' => $result->usage->imageCount,
+                'input_tokens' => $result->usage->inputTokens,
+                'output_tokens' => $result->usage->outputTokens,
+            ] : null,
+            'path' => null,
+            'url' => null,
+            'disk' => null,
+            'filename' => null,
+            'storage_error' => null,
+        ];
+
+        if ($options->persist === false) {
+            return $envelope;
+        }
+
+        try {
+            $stored = ImagePersistence::persist(
+                $result->bytes,
+                $result->mimeType,
+                $options->disk,
+                $options->dir,
+                $options->filenamePrefix,
+            );
+            $envelope['path'] = $stored['path'];
+            $envelope['url'] = $stored['url'];
+            $envelope['disk'] = $stored['disk'];
+            $envelope['filename'] = $stored['filename'];
+        } catch (\Throwable $e) {
+            $envelope['storage_error'] = $e->getMessage();
+        }
+
+        return $envelope;
+    }
+
+    /**
+     * Fire the {@see AiInvoked} event for an image-gen call.
+     */
+    protected function fireImageInvokedEvent(array $envelope, string $operation): void
+    {
+        if (! function_exists('event')) {
+            return;
+        }
+
+        event(new AiInvoked(
+            modelId: $envelope['model_id'] ?? 'unknown',
+            inputTokens: $envelope['usage']['input_tokens'] ?? 0,
+            outputTokens: $envelope['usage']['output_tokens'] ?? 0,
+            cost: $envelope['cost'] ?? 0.0,
+            latencyMs: $envelope['latency_ms'] ?? 0,
+            keyUsed: $envelope['key_used'] ?? 'unknown',
+            platform: $this->platformName(),
+            operation: $operation,
+            imageCount: $envelope['usage']['image_count'] ?? null,
+            savedPath: $envelope['path'] ?? null,
+            mimeType: $envelope['mime'] ?? null,
+        ));
     }
 
     /**

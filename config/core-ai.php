@@ -33,6 +33,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Image Generation Storage (v2.4.0)
+    |--------------------------------------------------------------------------
+    |
+    | Default disk + directory used by image-generation calls when the
+    | call site doesn't pass overrides. Each provider block below can
+    | override via `storage.disk` and `storage.dir` for finer control
+    | (e.g. bedrock writes to S3, azure writes to a separate bucket).
+    |
+    */
+
+    'storage' => [
+        'disk' => env('CORE_AI_IMAGE_DISK', 'public'),
+        'dir'  => env('CORE_AI_IMAGE_DIR', 'ai-images'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | AWS Bedrock Provider (ubxty/bedrock-ai)
     |--------------------------------------------------------------------------
     |
@@ -253,26 +270,244 @@ return [
         | in code; display labels stay customisable from the consuming app.
         |
         */
-        'models' => array_filter([
-            'default' => (function () {
-                $ids = array_filter(array_map('trim', explode(',', (string) env('BEDROCK_MODELS', ''))));
+        'models' => [
+            'default' => array_merge(
+                [
+                    // Static catalogue of image-generation models with full
+                    // capability + pricing metadata. The env-driven list
+                    // below is merged on top so a user-supplied model id
+                    // can override the defaults without code edits.
+                    'amazon.nova-canvas-v1:0' => [
+                        'name' => 'Amazon Nova Canvas',
+                        'provider' => 'Amazon',
+                        'context_window' => 0,
+                        'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit', 'variation'],
+                        // NOTE: Bedrock marks this "Legacy" and may
+                        // reject calls on accounts that haven't used it
+                        // in 30 days. Catalogue stays active.
+                        'is_active' => true,
+                        'pricing' => [
+                            'price_per_image' => 0.04,
+                            'price_per_image_1024x1024' => 0.04,
+                            'price_per_image_1024x1536' => 0.06,
+                        ],
+                    ],
+                    'amazon.titan-image-generator-v2:0' => [
+                        'name' => 'Amazon Titan Image Generator v2',
+                        'provider' => 'Amazon',
+                        'context_window' => 0,
+                        'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit', 'variation'],
+                        // NOTE: Legacy / EOL 2026-06-30 (past).
+                        // Catalogue stays active.
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.04],
+                    ],
+                    'stability.stable-image-core-v1:1' => [
+                        'name' => 'Stable Image Core',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0,
+                        'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.06],
+                    ],
+                    'stability.stable-image-ultra-v1:1' => [
+                        'name' => 'Stable Image Ultra',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0,
+                        'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.12],
+                    ],
+                    'stability.sd3-5-large-v1:0' => [
+                        'name' => 'Stable Diffusion 3.5 Large',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0,
+                        'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.08],
+                    ],
 
-                return array_filter(array_combine(
-                    $ids,
-                    array_map(fn (string $id) => ['name' => $id], $ids),
-                ));
-            })(),
-        ]),
+                    // ----------------------------------------------------------------
+                    // Stability AI single-operation utilities (Active on Bedrock).
+                    // Each is a dedicated, image-input endpoint — no text-only T2I.
+                    // Exposed under the Edit/Variation surface so an operator can
+                    // pick a specific utility (e.g. erase-object, inpaint) from
+                    // the dropdown. Pricing is a flat per-image rate.
+                    // ----------------------------------------------------------------
+                    'stability.stable-image-remove-background-v1:0' => [
+                        'name' => 'Stable Image Remove Background',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.07],
+                    ],
+                    'stability.stable-image-erase-object-v1:0' => [
+                        'name' => 'Stable Image Erase Object',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.07],
+                    ],
+                    'stability.stable-image-control-structure-v1:0' => [
+                        'name' => 'Stable Image Control: Structure',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.07],
+                    ],
+                    'stability.stable-image-control-sketch-v1:0' => [
+                        'name' => 'Stable Image Control: Sketch',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.07],
+                    ],
+                    'stability.stable-image-style-guide-v1:0' => [
+                        'name' => 'Stable Image Style Guide',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.07],
+                    ],
+                    'stability.stable-image-search-and-replace-v1:0' => [
+                        'name' => 'Stable Image Search and Replace',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.07],
+                    ],
+                    'stability.stable-image-inpaint-v1:0' => [
+                        'name' => 'Stable Image Inpaint',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.07],
+                    ],
+                    'stability.stable-image-search-and-recolor-v1:0' => [
+                        'name' => 'Stable Image Search and Recolor',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.07],
+                    ],
+                    'stability.stable-image-style-transfer-v1:0' => [
+                        'name' => 'Stable Image Style Transfer',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.08],
+                    ],
+                    'stability.stable-image-conservative-upscale-v1:0' => [
+                        'name' => 'Stable Image Conservative Upscale',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.40],
+                    ],
+                    'stability.stable-image-creative-upscale-v1:0' => [
+                        'name' => 'Stable Image Creative Upscale',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.60],
+                    ],
+                    'stability.stable-image-fast-upscale-v1:0' => [
+                        'name' => 'Stable Image Fast Upscale',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.03],
+                    ],
+                    'stability.stable-outpaint-v1:0' => [
+                        'name' => 'Stable Image Outpaint',
+                        'provider' => 'Stability AI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.06],
+                    ],
+                ],
+                (function () {
+                    $ids = array_filter(array_map('trim', explode(',', (string) env('BEDROCK_MODELS', ''))));
 
-        /*
-        |----------------------------------------------------------------------
-        | Invocation Logging
-        |----------------------------------------------------------------------
-        |
-        | Log every Bedrock invocation for auditing and cost tracking.
-        | Set the channel to any configured Laravel log channel.
-        |
-        */
+                    return array_filter(array_combine(
+                        $ids,
+                        array_map(fn (string $id) => ['name' => $id], $ids),
+                    ));
+                })(),
+            ),
+        ],
         'logging' => [
             'enabled' => env('BEDROCK_LOGGING_ENABLED', false),
             'channel' => env('BEDROCK_LOG_CHANNEL', 'stack'),
@@ -493,16 +728,224 @@ return [
         | in code; display labels stay customisable from the consuming app.
         |
         */
-        'models' => array_filter([
-            'default' => (function () {
-                $ids = array_filter(array_map('trim', explode(',', (string) env('AZURE_OPENAI_MODELS', ''))));
+        'models' => [
+            'default' => array_merge(
+                [
+                    // ----------------------------------------------------------------
+                    // OpenAI gpt-image series on Azure OpenAI data-plane.
+                    // gpt-image-1 and 1.5 (and 2) accept input images, support
+                    // input_fidelity + transparent PNG + n=1..10. gpt-image-1-mini
+                    // skips input_fidelity and face preservation.
+                    // ----------------------------------------------------------------
+                    'gpt-image-2' => [
+                        'name' => 'GPT-image-2',
+                        'provider' => 'OpenAI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit', 'variation'],
+                        'is_active' => true,
+                        'pricing' => [
+                            'price_per_image_1024x1024_low'    => 0.011,
+                            'price_per_image_1024x1024_medium' => 0.042,
+                            'price_per_image_1024x1024_high'   => 0.133,
+                        ],
+                    ],
+                    'gpt-image-1.5' => [
+                        'name' => 'GPT-image-1.5',
+                        'provider' => 'OpenAI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit', 'variation'],
+                        'is_active' => true,
+                        'pricing' => [
+                            'price_per_image_1024x1024_low'    => 0.011,
+                            'price_per_image_1024x1024_medium' => 0.042,
+                            'price_per_image_1024x1024_high'   => 0.133,
+                        ],
+                    ],
+                    'gpt-image-1' => [
+                        'name' => 'GPT-image-1',
+                        'provider' => 'OpenAI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit', 'variation'],
+                        'is_active' => true,
+                        'pricing' => [
+                            'price_per_image_1024x1024_low'    => 0.011,
+                            'price_per_image_1024x1024_medium' => 0.042,
+                            'price_per_image_1024x1024_high'   => 0.133,
+                        ],
+                    ],
+                    'gpt-image-1-mini' => [
+                        'name' => 'GPT-image-1 mini',
+                        'provider' => 'OpenAI',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        // 1-mini supports edits but no input_fidelity and no
+                        // standalone variation endpoint in the OpenAI Image API.
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => [
+                            'price_per_image_1024x1024_low'    => 0.005,
+                            'price_per_image_1024x1024_medium' => 0.020,
+                            'price_per_image_1024x1024_high'   => 0.066,
+                            'price_per_image_1024x1536_low'    => 0.006,
+                            'price_per_image_1024x1536_medium' => 0.028,
+                            'price_per_image_1024x1536_high'   => 0.110,
+                            'price_per_image_1536x1024_low'    => 0.006,
+                            'price_per_image_1536x1024_medium' => 0.028,
+                            'price_per_image_1536x1024_high'   => 0.110,
+                        ],
+                    ],
 
-                return array_filter(array_combine(
-                    $ids,
-                    array_map(fn (string $id) => ['name' => $id], $ids),
-                ));
-            })(),
-        ]),
+                    // ----------------------------------------------------------------
+                    // Black Forest Labs FLUX on Azure Foundry.
+                    // FLUX.1-Kontext-pro is GA on Azure (character consistency +
+                    // advanced editing). FLUX-1.1-pro + FLUX.2-pro/flex are
+                    // serverless via the BFL provider API.
+                    // ----------------------------------------------------------------
+                    'flux-1.1-pro' => [
+                        'name' => 'FLUX 1.1 Pro',
+                        'provider' => 'Black Forest Labs',
+                        'context_window' => 5000, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.04],
+                    ],
+                    'flux-1-kontext-pro' => [
+                        'name' => 'FLUX.1 Kontext Pro',
+                        'provider' => 'Black Forest Labs',
+                        'context_window' => 5000, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        // $0.04 per megapixel — 1 MP reference point.
+                        'pricing' => [
+                            'price_per_image'              => 0.04,
+                            'price_per_image_per_megapixel'=> 0.04,
+                        ],
+                    ],
+                    'flux.2-pro' => [
+                        'name' => 'FLUX.2 Pro',
+                        'provider' => 'Black Forest Labs',
+                        'context_window' => 32000, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.05],
+                    ],
+                    'flux.2-flex' => [
+                        'name' => 'FLUX.2 Flex',
+                        'provider' => 'Black Forest Labs',
+                        'context_window' => 32000, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.06],
+                    ],
+
+                    // ----------------------------------------------------------------
+                    // Microsoft MAI-Image on Azure Foundry (sold-by-Azure).
+                    // Each takes text and (optionally) image input, returns PNG.
+                    // ----------------------------------------------------------------
+                    'mai-image-2.6' => [
+                        'name' => 'MAI-Image-2.6',
+                        'provider' => 'Microsoft',
+                        'context_window' => 32000, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.05],
+                    ],
+                    'mai-image-2.6-flash' => [
+                        'name' => 'MAI-Image-2.6 Flash',
+                        'provider' => 'Microsoft',
+                        'context_window' => 32000, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.025],
+                    ],
+                    'mai-image-2.5-pro' => [
+                        'name' => 'MAI-Image-2.5 Pro',
+                        'provider' => 'Microsoft',
+                        'context_window' => 32000, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.06],
+                    ],
+                    'mai-image-2.5-flash' => [
+                        'name' => 'MAI-Image-2.5 Flash',
+                        'provider' => 'Microsoft',
+                        'context_window' => 32000, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.03],
+                    ],
+                    'mai-image-2.5' => [
+                        'name' => 'MAI-Image-2.5',
+                        'provider' => 'Microsoft',
+                        'context_window' => 32000, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text', 'image'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate', 'edit'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.04],
+                    ],
+
+                    // ----------------------------------------------------------------
+                    // Bria (Foundry catalog)
+                    // ----------------------------------------------------------------
+                    'bria-2.3-fast' => [
+                        'name' => 'Bria 2.3 Fast',
+                        'provider' => 'Bria',
+                        'context_window' => 0, 'max_tokens' => 0,
+                        'capabilities' => ['image_generation'],
+                        'input_modalities' => ['text'],
+                        'output_modalities' => ['image'],
+                        'operations' => ['generate'],
+                        'is_active' => true,
+                        'pricing' => ['price_per_image' => 0.04],
+                    ],
+                ],
+                (function () {
+                    $ids = array_filter(array_map('trim', explode(',', (string) env('AZURE_OPENAI_MODELS', ''))));
+
+                    return array_filter(array_combine(
+                        $ids,
+                        array_map(fn (string $id) => ['name' => $id], $ids),
+                    ));
+                })(),
+            ),
+        ],
 
         /*
         |----------------------------------------------------------------------

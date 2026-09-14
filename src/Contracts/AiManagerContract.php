@@ -209,4 +209,65 @@ interface AiManagerContract
      * @return array<int, array{index: int, label: string, }>
      */
     public function getCredentialInfo(?string $connection = null): array;
+
+    /**
+     * Generate an image from a text prompt.
+     *
+     * Auto-persists the result to Laravel Storage and returns both the
+     * raw bytes and the saved path/url. Override via `$options->persist = false`.
+     *
+     * @return array{
+     *     bytes: string, mime: string, path: ?string, url: ?string,
+     *     disk: ?string, model_id: string, revised_prompt: ?string,
+     *     latency_ms: int, cost: float, key_used: string, cached: bool, status: string
+     * }
+     */
+    public function generateImage(
+        string $modelId,
+        string $prompt,
+        ?ImageGenerationOptions $options = null,
+        ?string $connection = null,
+    ): array;
+
+    /**
+     * Edit an existing image (inpaint / mask-driven generation).
+     *
+     * `$sourceImagePath` is read from disk and base64-encoded by the
+     * provider client. `$maskPath` is optional; some providers use
+     * semantic masks instead of bitmap masks.
+     *
+     * @return array{
+     *     bytes: string, mime: string, path: ?string, url: ?string,
+     *     disk: ?string, model_id: string, revised_prompt: ?string,
+     *     latency_ms: int, cost: float, key_used: string, cached: bool, status: string
+     * }
+     */
+    public function editImage(
+        string $modelId,
+        string $prompt,
+        string $sourceImagePath,
+        ?string $maskPath = null,
+        ?ImageGenerationOptions $options = null,
+        ?string $connection = null,
+    ): array;
+
+    /**
+     * Generate a variation of an existing image.
+     *
+     * `$sourceImagePath` is read from disk and base64-encoded by the
+     * provider client. No prompt is sent — the model derives its own
+     * from the input image.
+     *
+     * @return array{
+     *     bytes: string, mime: string, path: ?string, url: ?string,
+     *     disk: ?string, model_id: string, revised_prompt: ?string,
+     *     latency_ms: int, cost: float, key_used: string, cached: bool, status: string
+     * }
+     */
+    public function variationImage(
+        string $modelId,
+        string $sourceImagePath,
+        ?ImageGenerationOptions $options = null,
+        ?string $connection = null,
+    ): array;
 }

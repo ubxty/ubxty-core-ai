@@ -400,6 +400,93 @@ For image and document files larger than 15 MB, the builder throws `AiException`
 
 ---
 
+## Image Generation (v2.4.0)
+
+`AiManagerContract` exposes three explicit image-output methods. Each auto-persists the result to Laravel Storage and returns both the raw bytes and the saved path/URL. Pass `ImageGenerationOptions` to override defaults; pass `persist: false` to skip persistence entirely.
+
+```php
+use Ubxty\CoreAi\Contracts\ImageGenerationOptions;
+
+$env = Bedrock::generateImage('amazon.nova-canvas-v1:0', 'a foggy street at dawn');
+// → ['bytes' => '...', 'mime' => 'image/png', 'path' => 'ai-images/img-...png', 'url' => 'http://...',
+//    'model_id' => '...', 'revised_prompt' => null, 'latency_ms' => 2400, 'cost' => 0.04,
+//    'key_used' => 'Primary', 'cached' => false, 'status' => 'success', 'operation' => 'generate',
+//    'usage' => ['image_count' => 1, 'input_tokens' => 0, 'output_tokens' => 0]]
+
+$edited = Azure::editImage(
+    'gpt-image-1',
+    'add a beach ball in the foreground',
+    sourceImagePath: storage_path('app/public/photos/beach.png'),
+);
+
+$variant = Bedrock::variationImage(
+    'amazon.nova-canvas-v1:0',
+    sourceImagePath: storage_path('app/public/photos/logo.png'),
+    options: new ImageGenerationOptions(n: 4, seed: 42),
+);
+```
+
+Per-call overrides:
+
+```php
+$opts = new ImageGenerationOptions(
+    n: 1,
+    size: '1024x1024',
+    quality: 'high',
+    negativePrompt: 'blurry, low quality',
+    seed: 42,
+    steps: 30,
+    cfgScale: 7.5,
+    persist: false,             // skip persistence; return raw bytes only
+    disk: 's3',                 // override storage.disk
+    dir: 'campaigns/2026/q3',   // override storage.dir
+    filenamePrefix: 'hero',
+);
+
+$img = Azure::generateImage('gpt-image-1', 'an astronaut riding a horse', $opts);
+```
+
+Capabilities gate: every model that supports image generation must list `'image_generation'` in its `capabilities` config array — `generateImage()` / `editImage()` / `variationImage()` throw `ConfigurationException` otherwise. The model's `pricing` map drives cost tracking:
+
+```php
+'gpt-image-1' => [
+    'capabilities' => ['text', 'image_generation', ...],
+    'pricing' => [
+        'price_per_image_1024x1024' => 0.04,
+        'price_per_image_1024x1536' => 0.06,
+        'price_per_image'           => 0.04,  // fallback
+    ],
+],
+```
+
+Response caching is on by default (`cache.image_ttl` = 86400 s). Identical prompts + size + seed + source/mask hashes reuse the cached envelope without going to the wire — image-gen calls are slow and expensive, so this matters. Set `cache.image_ttl => 0` to disable.
+
+Disk + directory defaults come from `config/core-ai.php`:
+
+```php
+'storage' => [
+    'disk' => env('CORE_AI_IMAGE_DISK', 'public'),
+    'dir'  => env('CORE_AI_IMAGE_DIR', 'ai-images'),
+],
+```
+
+The event surface is the existing `AiInvoked` plus optional fields:
+
+```php
+event(new AiInvoked(
+    modelId: 'amazon.nova-canvas-v1:0',
+    // ... existing fields ...
+    operation: 'generate',     // 'generate' | 'edit' | 'variation' | null
+    imageCount: 1,
+    savedPath: 'ai-images/img-01HXYZ....png',
+    mimeType: 'image/png',
+));
+```
+
+`ModelSpecResolver::outputModalities($modelId)` returns `['image']` for `gpt-image-*`, `nova-canvas`, `titan-image`, `stable-image*`, `stable-diffusion*`, `flux*`, `mai-image*`, `luma*`/`*ray*`, and legacy `dall-e*`; everything else stays `['text']`.
+
+---
+
 ## TokenEstimator
 
 [`Ubxty\CoreAi\Support\TokenEstimator`](src/Support/TokenEstimator.php) is a static helper with rough-but-cheap heuristics.

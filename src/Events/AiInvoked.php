@@ -17,5 +17,9 @@ class AiInvoked
         public readonly string $keyUsed,
         public readonly ?string $connection = null,
         public readonly ?string $platform = null,
+        public readonly ?string $operation = null,
+        public readonly ?int $imageCount = null,
+        public readonly ?string $savedPath = null,
+        public readonly ?string $mimeType = null,
     ) {}
 }

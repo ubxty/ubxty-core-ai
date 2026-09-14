@@ -102,4 +102,42 @@ interface LLMClientContract
      * "Anthropic", "AWS Bedrock", "Google Gemini").
      */
     public function platformName(): string;
+
+    /**
+     * Generate an image from a text prompt.
+     *
+     * Wire-format level method — implementations translate the prompt
+     * into the provider's request shape and return raw bytes. The
+     * manager layer is responsible for persistence, cost tracking,
+     * and event firing.
+     */
+    public function generateImage(
+        string $modelId,
+        string $prompt,
+        ?ImageGenerationOptions $options = null,
+        ?string $connection = null,
+    ): ImageResult;
+
+    /**
+     * Edit an existing image. `$sourceImagePath` is read from disk by
+     * the implementation; `$maskPath` is optional.
+     */
+    public function editImage(
+        string $modelId,
+        string $prompt,
+        string $sourceImagePath,
+        ?string $maskPath = null,
+        ?ImageGenerationOptions $options = null,
+        ?string $connection = null,
+    ): ImageResult;
+
+    /**
+     * Generate a variation of an existing image.
+     */
+    public function variationImage(
+        string $modelId,
+        string $sourceImagePath,
+        ?ImageGenerationOptions $options = null,
+        ?string $connection = null,
+    ): ImageResult;
 }

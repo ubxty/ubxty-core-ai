@@ -128,6 +128,22 @@ class ModelSpecResolver
             return ['context_window' => 256000, 'max_tokens' => 4096];
         }
 
+        // Image-generation families — these don't have text context windows;
+        // context_window = 0 signals "image-output model, no text context".
+        $imageFamilies = [
+            'gpt-image', 'dall-e',
+            'nova-canvas',
+            'titan-image',
+            'stable-image', 'stable-diffusion',
+            'flux', 'mai-image',
+            'luma', 'ray',
+        ];
+        foreach ($imageFamilies as $needle) {
+            if (str_contains($modelId, $needle)) {
+                return ['context_window' => 0, 'max_tokens' => 0];
+            }
+        }
+
         return $specs;
     }
 
@@ -218,6 +234,58 @@ class ModelSpecResolver
     public static function supportsModality(string $modelId, string $modality): bool
     {
         return in_array($modality, self::inputModalities($modelId), true);
+    }
+
+    /**
+     * Resolve the known output modalities for a model based on its ID.
+     *
+     * Image-output families covered:
+     *   - OpenAI / Azure: `gpt-image-*` (gpt-image-2 / 1.5 / 1 / 1-mini), legacy `dall-e*`
+     *   - AWS Bedrock: `nova-canvas`, `titan-image`, `stable-image-*`, `stable-diffusion*`, `luma*` / `*ray*`
+     *   - Azure: `flux*` (FLUX.2-pro / flex / FLUX.1-Kontext-pro / FLUX-1.1-pro)
+     *   - Azure (Microsoft): `mai-image*` (MAI-Image-2.6 / 2.6-Flash / 2.5-Pro / 2.5-Flash / 2.5)
+     *
+     * @return array<int, string>
+     */
+    public static function outputModalities(string $modelId): array
+    {
+        if (str_contains($modelId, 'gpt-image') || str_contains($modelId, 'dall-e')) {
+            return ['image'];
+        }
+
+        if (str_contains($modelId, 'nova-canvas')) {
+            return ['image'];
+        }
+
+        if (str_contains($modelId, 'titan-image')) {
+            return ['image'];
+        }
+
+        if (str_contains($modelId, 'stable-image') || str_contains($modelId, 'stable-diffusion')) {
+            return ['image'];
+        }
+
+        if (str_contains($modelId, 'flux')) {
+            return ['image'];
+        }
+
+        if (str_contains($modelId, 'mai-image')) {
+            return ['image'];
+        }
+
+        if (str_contains($modelId, 'luma') || str_contains($modelId, 'ray')) {
+            return ['image'];
+        }
+
+        return ['text'];
+    }
+
+    /**
+     * Check if a model supports a given output modality (e.g. `image`).
+     */
+    public static function supportsOutputModality(string $modelId, string $modality): bool
+    {
+        return in_array($modality, self::outputModalities($modelId), true);
     }
 
     /**

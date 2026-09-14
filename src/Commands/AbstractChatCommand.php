@@ -272,6 +272,24 @@ abstract class AbstractChatCommand extends Command
                 continue;
             }
 
+            if (str_starts_with($command, '/gen ')) {
+                $this->handleGenerateImageCommand(substr($input, 5), $connection);
+
+                continue;
+            }
+
+            if (str_starts_with($command, '/edit ')) {
+                $this->handleEditImageCommand(substr($input, 6), $connection);
+
+                continue;
+            }
+
+            if (str_starts_with($command, '/variation ')) {
+                $this->handleVariationImageCommand(substr($input, 11), $connection);
+
+                continue;
+            }
+
             $messageToModel = $input;
             $spooledInfo = null;
 
@@ -548,6 +566,155 @@ abstract class AbstractChatCommand extends Command
         );
     }
 
+    /**
+     * `/gen <prompt>` — generate an image from text via the manager's default
+     * image model. Image is auto-persisted to Laravel Storage and the saved
+     * path is echoed back to the user.
+     */
+    protected function handleGenerateImageCommand(string $prompt, ?string $connection): void
+    {
+        $prompt = trim($prompt);
+        if ($prompt === '') {
+            $this->warn('Usage: /gen <prompt>');
+
+            return;
+        }
+
+        $modelId = $this->manager->defaultImageModel();
+        if ($modelId === '' || $modelId === null) {
+            $this->error('No default image model configured. Set defaults.image_model in config/core-ai.php.');
+
+            return;
+        }
+
+        $this->newLine();
+        $this->line(sprintf('  <fg=cyan>Generating via %s…</>', $modelId));
+
+        try {
+            $envelope = $this->manager->generateImage($modelId, $prompt, null, $connection);
+        } catch (\Throwable $e) {
+            $this->error('Generation failed: '.$e->getMessage());
+
+            return;
+        }
+
+        $this->reportImageEnvelope($envelope);
+    }
+
+    /**
+     * `/edit <source-path> <prompt>` — edit / inpaint an existing image.
+     * `/edit <source-path> --mask=<mask-path> <prompt>` — same, with explicit
+     * mask. The `--mask=` form lets the prompt span any characters
+     * (including spaces) without ambiguity, while the bare form keeps the
+     * common two-token usage terse.
+     */
+    protected function handleEditImageCommand(string $args, ?string $connection): void
+    {
+        $args = trim($args);
+        if ($args === '') {
+            $this->warn('Usage: /edit <path> [--mask=<mask>] <prompt>');
+
+            return;
+        }
+
+        $mask = null;
+        if (preg_match('/(?:^|\s)--mask=(.+?)(?=\s|$)/', $args, $m)) {
+            $mask = $m[1];
+            $args = trim(preg_replace('/(?:^|\s)--mask=\S+/', '', $args));
+        }
+
+        $parts = preg_split('/\s+/', $args, 2);
+        $source = $parts[0] ?? '';
+        $prompt = $parts[1] ?? '';
+        if ($source === '' || $prompt === '') {
+            $this->warn('Usage: /edit <path> [--mask=<mask>] <prompt>');
+
+            return;
+        }
+
+        $modelId = $this->manager->defaultImageModel();
+        if ($modelId === '' || $modelId === null) {
+            $this->error('No default image model configured. Set defaults.image_model in config/core-ai.php.');
+
+            return;
+        }
+
+        $this->newLine();
+        $suffix = $mask !== null ? " (mask: {$mask})" : '';
+        $this->line(sprintf('  <fg=cyan>Editing %s%s via %s…</>', $source, $suffix, $modelId));
+
+        try {
+            $envelope = $this->manager->editImage($modelId, $prompt, $source, $mask, null, $connection);
+        } catch (\Throwable $e) {
+            $this->error('Edit failed: '.$e->getMessage());
+
+            return;
+        }
+
+        $this->reportImageEnvelope($envelope);
+    }
+
+    /**
+     * `/variation <path>` — generate a variation of an existing image.
+     */
+    protected function handleVariationImageCommand(string $path, ?string $connection): void
+    {
+        $path = trim($path);
+        if ($path === '') {
+            $this->warn('Usage: /variation <path>');
+
+            return;
+        }
+
+        $modelId = $this->manager->defaultImageModel();
+        if ($modelId === '' || $modelId === null) {
+            $this->error('No default image model configured. Set defaults.image_model in config/core-ai.php.');
+
+            return;
+        }
+
+        $this->newLine();
+        $this->line(sprintf('  <fg=cyan>Generating variation of %s via %s…</>', $path, $modelId));
+
+        try {
+            $envelope = $this->manager->variationImage($modelId, $path, null, $connection);
+        } catch (\Throwable $e) {
+            $this->error('Variation failed: '.$e->getMessage());
+
+            return;
+        }
+
+        $this->reportImageEnvelope($envelope);
+    }
+
+    /**
+     * Pretty-print an image-gen envelope after a /gen, /edit, /variation call.
+     */
+    protected function reportImageEnvelope(array $envelope): void
+    {
+        $this->newLine();
+
+        if (! empty($envelope['path'])) {
+            $this->info(sprintf('  ✔ Saved to %s', $envelope['path']));
+        } else {
+            $this->warn('  Image not persisted (pass options->persist = true).');
+        }
+
+        if (! empty($envelope['url'])) {
+            $this->line(sprintf('    URL: %s', $envelope['url']));
+        }
+
+        $cost = number_format((float) ($envelope['cost'] ?? 0), 4);
+        $latency = (int) ($envelope['latency_ms'] ?? 0);
+        $modelId = $envelope['model_id'] ?? '?';
+
+        $this->line(sprintf('    model=%s cost=$%s latency=%dms', $modelId, $cost, $latency));
+
+        if (! empty($envelope['storage_error'])) {
+            $this->warn('    storage error: '.$envelope['storage_error']);
+        }
+    }
+
     protected function printHelp(): void
     {
         $this->newLine();
@@ -568,6 +735,11 @@ abstract class AbstractChatCommand extends Command
         $this->line('                    Analyse an image (jpg/png/gif/webp)');
         $this->line('  <fg=yellow>/doc <path> [prompt]</>');
         $this->line('                    Analyse a document (pdf/csv/docx/xlsx/html/txt/md)');
+        $this->line('  <fg=yellow>/gen <prompt></>    Generate an image from text (uses defaults.image_model)');
+        $this->line('  <fg=yellow>/edit <path> [--mask=<mask>] <prompt></>');
+        $this->line('                    Edit / inpaint an image at <path> (optional --mask=)');
+        $this->line('  <fg=yellow>/variation <path></>');
+        $this->line('                    Generate variations of an image at <path>');
     }
 
     protected function printStats(): void

@@ -93,6 +93,7 @@ abstract class AbstractModelsCommand extends Command
             $rows = array_map(function ($model) {
                 $ctx = number_format($model['context_window'] / 1000).'k';
                 $inputs = $model['input_modalities'] ?? ['text'];
+                $capabilities = $model['capabilities'] ?? [];
                 $inputTags = [];
                 if (in_array('image', $inputs, true)) {
                     $inputTags[] = 'img';
@@ -100,19 +101,22 @@ abstract class AbstractModelsCommand extends Command
                 if (in_array('document', $inputs, true)) {
                     $inputTags[] = 'pdf';
                 }
+                if (in_array('image_generation', $capabilities, true)) {
+                    $inputTags[] = 'img-gen';
+                }
 
                 return [
                     $model['name'],
                     $model['model_id'],
                     $ctx,
-                    implode(', ', $model['capabilities']),
+                    implode(', ', $capabilities),
                     ! empty($inputTags) ? implode(', ', $inputTags) : '—',
                     $model['is_active'] ? '✓' : '—',
                 ];
             }, $providerModels);
 
             $this->table(
-                ['Name', 'Model ID', 'Context', 'Output', 'Accepts', 'Active'],
+                ['Name', 'Model ID', 'Context', 'Capabilities', 'Accepts', 'Active'],
                 $rows
             );
 
